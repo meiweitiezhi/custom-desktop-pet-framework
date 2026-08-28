@@ -158,7 +158,7 @@
         "states/sleep_D086.png",
         "states/sleep_D087.png"
       ],
-      "frame_ms": 90,
+      "frame_ms": 22,
       "play": "once",
       "return_to": "idle",
       "pingpong": true,
