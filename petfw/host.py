@@ -213,9 +213,9 @@ def load_states(display_size: int) -> dict:
             if spec.get("pingpong"):
                 # 乒乓档：交给 ActionPlayer（loop 往返；once 播到尾即止）
                 entry["pingpong"] = True
-            # v4 动作字段透传：play_action / ActionPlayer / 保险丝都吃这份拷贝
+            # v4/v5 动作字段透传：play_action / ActionPlayer / 保险丝都吃这份拷贝
             for key in ("play", "return_to", "hold_seconds", "max_seconds",
-                        "transition_frames"):
+                        "transition_frames", "rounds", "perform_seconds"):
                 if key in spec:
                     entry[key] = spec[key]
             # 转场段帧图独立加载成自己的列表（不与表演帧混槽）；
