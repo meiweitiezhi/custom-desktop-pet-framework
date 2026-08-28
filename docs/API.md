@@ -57,7 +57,7 @@ hook桥接 ┘                     失败自动降级↑
 
 | type | 附加字段 | 触发者 |
 |---|---|---|
-| click | —（已退役，不再 dispatch 给驱动） | 左键单/双击由宿主专属接管：单击=固定句气泡+click_sfx 专属音效+hide 定格 1.5 秒，双击=alien_suck 吸入+合成 suck 音效；结算画面打开期间一律忽略 |
+| click | —（已退役，不再 dispatch 给驱动） | 左键单/双击由宿主专属接管：单击=固定句气泡+click_sfx 专属音效+shock 定格 1.2 秒（经转场帧融回 idle），双击=点歌开跳（click.wav 原声+dance 扭舞一段）；结算画面打开期间一律忽略 |
 | reminder | kind=`drink`/`stretch` | 健康提醒定时器 |
 | idle | seconds=安静秒数 | 无操作 ≥100s 后的随机闲聊 |
 | hook | event, message?, flourish?, streak? | 外部程序经 HTTP 桥送入；宿主在 `_on_hook` 统一合并 BuildStreak 的连败/翻盘判定（doom=连败3起、comeback=连败≥2后取胜） |
@@ -78,23 +78,29 @@ Hop(times=1)      # 0.7 秒弹跳加成
 ```
 
 STATES 状态词表（前四名为核心态缺图即退出，其余为可选态缺图自动跳过，
-可选态允许词表先注册、图片后补到位）：
+可选态允许词表先注册、图片后补到位）。**五态精简（主人拍板）**：日常保留
+idle/sleep/dance/shock/cry 五件套；laugh/eat/love/hide/alien/blushmax/angry
+与专属动作 alien_suck 已整体移入 manifest 顶层 `_disabled_states` 禁用区——
+loader 只读 `states`、显式忽略下划线开头的顶层键，禁用即「菜单消失、触发
+失效、数据完整可恢复」（把条目搬回 `states` 即恢复上线）。词表本身不缩减，
+LLM 脑误报禁用态时宿主按缺图语义安静维持现状：
 
 | state | 中文名 | 使用场景 |
 |---|---|---|
 | idle | 发呆 | 核心态。默认待机、安静陪伴、无话可说时 |
 | cheer | 打气 | 核心态。开工、成功、收工等庆祝时刻 |
-| eat | 干饭 | 核心态。喝水提醒、"改代码像干饭"的场景 |
-| sleep | 犯困 | 核心态。伸懒腰提醒、出错躺平、雨雪天气 |
-| laugh | 笑哭 | 可选新态。点击逗趣、轻松玩笑的场合 |
-| shock | 惊讶 | 可选新态。突发事件、出乎意料的通知（几乎静止微颤） |
-| angry | 生气 | 可选新态。连续报错、"炸毛"式吐槽 |
-| dance | 扭舞 | 可选新态。Git 称号升级等高光庆祝时刻 |
-| cry | 哭唧唧 | 可选新态。hook error 报错时当场哭一场 |
-| hide | 缩帽躲 | 可选新态。编译连败 3 起（doom）躲进帽子反省人生 |
-| love | 比小心心 | 可选新态。翻盘成功、外部 praise/kiss 被夸被亲 |
-| alien | 外星吸人 | 可选新态。暂无自动触发，托盘可手选，台词池预留待未来钩子 |
-| blushmax | 羞耻爆炸 | 可选新态。暂无自动触发，托盘可手选，台词池预留待未来钩子 |
+| sleep | 睡觉 | 核心态。伸懒腰提醒、雨雪天气、闲置自动入睡 |
+| shock | 惊讶 | 保留五态。单击「不要戳我」演出、突发事件（经转场帧融回 idle） |
+| dance | 扭舞 | 保留五态。双击点歌开跳、被夸/翻盘庆祝、Git 升级高光 |
+| cry | 哭唧唧 | 保留五态。hook error 报错时当场哭一场 |
+| eat | 干饭 | **已禁用**（禁用区）。喝水提醒改回发呆+台词 |
+| laugh | 笑哭 | **已禁用**（禁用区）。词条注释保留可恢复 |
+| angry | 生气 | **已禁用**（禁用区，本就缺图）。 |
+| hide | 缩帽躲 | **已禁用**（禁用区）。doom 连败归宿待主人拍板（候选 cry/shock/恢复hide） |
+| love | 比小心心 | **已禁用**（禁用区）。praise/kiss 改映射 dance |
+| alien | 外星吸人 | **已禁用**（禁用区）。台词池注释保留 |
+| blushmax | 羞耻爆炸 | **已禁用**（禁用区）。台词池注释保留 |
+| alien_suck | UFO 吸入 | **已禁用**（禁用区）。双击演出已改 dance，条目数据完整 |
 
 静态立绘之外，`petfw/cutout_anim.py::RECIPES` 内置八套剪纸动画配方（laugh/cry/shock/eat/sleep/idle/cheer/angry 占位），本地可用 `python tools/local/gifgen.py --state <名> --preview` 合成样片到 assets/raw/drafts（本地目录，不入库），验收后 `--install` 覆盖母带并重跑 `prep_assets.py`。
 
@@ -177,17 +183,17 @@ cmd /c "cd /d %PETFW_HOME% && python -m petfw.react edit"
 | event | 表情反应 |
 |---|---|
 | start | cheer「开工！我给你举花球！」 |
-| edit | eat「让我看看改了啥好吃的」 |
+| edit | idle「让我看看改了啥好吃的」（原 eat 已入禁用区，改回发呆旁观） |
 | test | idle「测试跑着呢，我盯着呢」 |
 | success | cheer「搞定！夸我夸我！」 |
-| error | cry「呜哇——又挂了…」（连败 3 起 → hide「让我在这顶帽子里反省一下人生」） |
-| praise / kiss | love「嘿嘿…被夸得好开心嘛」（外部程序可发的自定义事件，两者同池台词） |
+| error | cry「呜哇——又挂了…」（连败 3 起的 doom 归宿待主人拍板：候选 cry/shock/恢复hide，拍板前暂以 error→cry 兜底） |
+| praise / kiss | dance「嘿嘿…被夸得好开心嘛」（被夸/翻盘=开心到跳舞；外部程序可发的自定义事件，两者同池台词） |
 | done | 触发全屏结算画面：扫当日提交数弹走马灯战报（有本地 BGM 则按 `bgm_rate` 变速循环播放）；结算期间本体切扭舞持续蹦跶，关窗自动恢复打开前的表情 |
 
 连败/翻盘由宿主 `PetWindow._on_hook` 里的 BuildStreak 判定后以
 `flourish`/`streak` 字段并入事件；连续 error 计数穿插 edit/test 等其它
-信号不清账，success 终结连败（≥2）时报 comeback，翻盘时刻切 love 并附
-带一段 Hop 蹦跶。
+信号不清账，success 终结连败（≥2）时报 comeback，翻盘时刻切 dance 并附
+带一段 Hop 蹦跶（原 love 已入禁用区）。
 
 ## 7. 角色/素材清单格式 `assets/manifest.json`
 
@@ -245,10 +251,18 @@ cmd /c "cd /d %PETFW_HOME% && python -m petfw.react edit"
   但表演期的换帧节奏恒为 frame_ms，不再分档变速。
 
 注意：新增状态名需同步加入 `petfw/bus.py::STATES` 才能被 SetState 接受。
-manifest 与词表的防漂移单测只约束两条：核心四态必须已登记、登记的名字
-不许超出 `bus.STATES`——可选新态允许先注册名字、图片后补到位。核心四态
-（idle/cheer/eat/sleep）缺图启动直接退出；可选新态缺图只警告跳过。多帧条目按
-整组 frames 全部到位才算不缺。
+manifest 与词表的防漂移单测只约束两条：核心态必须已登记（活动区或禁用区
+皆算在册，未被禁用的核心态必须留活动区）、登记的名字不许超出
+`bus.STATES ∪ ACTION_ONLY`——可选新态允许先注册名字、图片后补到位。
+核心四态（idle/cheer/eat/sleep）里仍处于活动区的状态缺图启动直接退出；
+可选新态缺图只警告跳过。多帧条目按整组 frames 全部到位才算不缺。
+
+**禁用区 `_disabled_states`**（manifest 顶层、下划线开头）：主人拍板的
+五态精简载体。loader（`host.load_states/collect_missing`，经
+`active_states()`）只读 `states`、显式忽略一切下划线开头的顶层键——
+条目搬出 `states` 即「菜单消失、触发失效」，条目搬回即恢复上线，
+数据全程不删。`tests/test_five_states.py` 锁死该机制。
+
 `prep_assets.py` 把 `assets/raw/*.png` 泛洪抠图后生成 `assets/states/*.png`
 （raw 目录只留本地不入库）；检测到 `*.gif` 则走抽稀管线——均匀采样 ≤6 帧
 （含首尾帧）、逐帧同容差抠图、所有帧裁到透明区联合包围盒防抖动，输出
@@ -260,18 +274,30 @@ dance 等全帧档跳过）。`bake_all_smooth_v2()` 则在循环时长不变（
 前提下把多帧状态加密到 30fps 载波（frame_ms=33）：从 source_frames 指向的
 原始 `_f` 姿态源重烘（绝不拿插帧帧再插帧），输出 `<状态>_D{idx:03d}.png`
 并写回 source_frames/source_loop_ms 源头标记，重跑幂等字节一致。
+`extend_return_transition()` 转场补帧管线（任务三）给 once 状态追加
+「收招回 idle」渐变帧：取序列末帧与 idle.png 生成 12 张（含首尾端点）
+`<状态>_T{idx:03d}.png` 追加到 frames 尾部，frame_ms 不变（33ms 载波下
+约 0.4 秒），末帧本就是 idle 姿态时直接复用 idle 图；重复执行先清旧 _T 帧
+再生成（幂等）。手动执行：
+
+```bash
+python -c "import prep_assets as p; p.extend_return_transition(p.OUT, p.MANIFEST, ('shock','cry','dance'))"
+```
 
 ## 8. 动作菜单（本体右键 = 托盘，共用一份清单）
 
 **右键点击桌宠本体**弹出中文动作点播菜单，托盘图标菜单同样由它填充：
 两者都走 `PetWindow.build_actions_menu(menu, window)` 这一个构建器，
-一处维护永不漂移。三段分组，词条只列已加载出图的状态：
+一处维护永不漂移。三段分组，词条只列已加载出图的状态。五态精简后：
+禁用态条目已从 `states` 撤下自动缺席；「天气演示」「模拟hook(edit)」
+两个系统词条经主人拍板暂时下线（构建器里整段注释保留，weather 扩展
+本体与桥接事件通路不动，随时可恢复入口）：
 
 | 分组 | 词条（中文名直呼其字） | 行为 |
 |---|---|---|
-| 情绪 | 发呆 打气 干饭 睡觉 笑哭 惊讶 [生气] 扭舞 | `play_action(name)`：完整播放一次演完回家（生气缺素材时整个词条隐藏） |
-| 整活 | 哭唧唧 缩帽躲 比小心心 外星吸人 羞耻爆炸 | 同上 |
-| 系统 | 今日战报 / 天气演示(晴·多云·雨·雪子菜单) / 模拟hook(edit) / 健康提醒(开关) / 退出 | 复用宿主既有槽方法 |
+| 情绪 | 发呆 打气 睡觉 惊讶 扭舞 | `play_action(name)`：完整播放一次（含转场帧）演完回家 |
+| 整活 | 哭唧唧 | 同上 |
+| 系统 | 今日战报 / 健康提醒(开关) / 退出 | 复用宿主既有槽方法；~~天气演示~~、~~模拟hook(edit)~~ 已下线 |
 
 表演期间收到的 SetState 不会打断演出：请求进候补位排队（后来的覆盖
 先来的），谢幕后再应用（`host.defer_if_playing` 纯函数裁决）。

@@ -33,8 +33,8 @@ def _says(cmds):
 
 
 # ------------------------------------------------ 任务二：点击接管与台词池迁移
-# 单击行为已由宿主专属接管（固定句 + 专属音效 + hide 定格演出），规则脑不再
-# 处理 click；原 CLICK_LINES 随机池整体迁移为 praise/kiss 的 PRAISE_LINES。
+# 单击行为已由宿主专属接管（固定句 + 专属音效 + shock 定格演出，hide 已入禁用区），
+# 规则脑不再处理 click；原 CLICK_LINES 随机池整体迁移为 praise/kiss 的 PRAISE_LINES。
 class TestClickTakenOverAndPraisePool(unittest.TestCase):
     def setUp(self):
         self.d = RuleDriver()
@@ -65,12 +65,13 @@ class TestClickTakenOverAndPraisePool(unittest.TestCase):
                      "嘿嘿…被夸得好开心嘛", "mua！收下我的小心心！"):
             self.assertIn(line, PRAISE_LINES)
 
-    def test_praise_and_kiss_share_pool_with_love(self):
+    def test_praise_and_kiss_share_pool_with_dance(self):
+        # love 已入禁用区（五态精简）：被夸/被亲改开心到跳舞，台词池保留
         from petfw.drivers.rule import PRAISE_LINES
         for ev in ("praise", "kiss"):
             for _ in range(20):
                 cmds = self.d.react({"type": "hook", "event": ev})
-                self.assertEqual(_states(cmds), ["love"], f"event={ev}")
+                self.assertEqual(_states(cmds), ["dance"], f"event={ev}")
                 for t in _says(cmds):
                     self.assertIn(t, PRAISE_LINES)
 
@@ -131,23 +132,29 @@ class TestBuildStreak(unittest.TestCase):
 
 
 class TestRuleFlourish(unittest.TestCase):
-    def test_comeback_loves_with_hop(self):
+    def test_comeback_dances_with_hop(self):
+        # love 已入禁用区：翻盘庆祝改扭舞，Hop 蹦跶与著名台词都保留
         d = RuleDriver()
         cmds = d.react({"type": "hook", "event": "success",
                         "flourish": "comeback", "streak": 2})
-        self.assertEqual(_states(cmds), ["love"])
+        self.assertEqual(_states(cmds), ["dance"])
         self.assertTrue(any(isinstance(c, bus.Hop) for c in cmds))
         self.assertIn("翻盘", "".join(_says(cmds)))
 
-    def test_doom_hides(self):
-        from petfw.drivers.rule import FLOURISH_DOOM
+    def test_doom_branch_retired_falls_back_to_error_mapping(self):
+        # doom→hide 随 hide 入禁用区整段注释：连败归宿待主人拍板，
+        # 当前 doom 落回普通事件映射（error→cry）兜底，绝不指向禁用态
+        from petfw.drivers import rule as rule_mod
+        self.assertFalse(hasattr(rule_mod, "FLOURISH_DOOM"),
+                         "FLOURISH_DOOM 应整体注释保留而非存活")
         d = RuleDriver()
-        for _ in range(20):  # 台词随机出池：只断言状态恒为 hide、话出自池子
+        for _ in range(20):
             cmds = d.react({"type": "hook", "event": "error",
                             "flourish": "doom", "streak": 3})
-            self.assertEqual(_states(cmds), ["hide"])
+            self.assertEqual(_states(cmds), ["cry"],
+                             "doom 兜底不得再演 hide")
             for t in _says(cmds):
-                self.assertIn(t, FLOURISH_DOOM[1])
+                self.assertIn(t, rule_mod.HOOK_LINES["error"][1])
 
     def test_without_flourish_keeps_normal_table(self):
         d = RuleDriver()

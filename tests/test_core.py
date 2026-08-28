@@ -353,6 +353,7 @@ NEW_FIVE = ("cry", "hide", "love", "alien", "blushmax")
 HOOK_ERROR_POOL = ["呜哇——又挂了…",
                    "别骂了别骂了，我自己知道错了",
                    "哇的一声哭出来"]
+# 【禁用区】doom 台词池随 hide 态退役：仅存档备查，不再是活代码
 FLOURISH_DOOM_POOL = ["让我在这顶帽子里反省一下人生",
                       "世界暂时与我无关，勿cue"]
 
@@ -397,17 +398,23 @@ class TestRuleTriggerMatrix(unittest.TestCase):
         for t in seen_texts:
             self.assertIn(t, set(HOOK_ERROR_POOL))
 
-    def test_flourish_doom_hides_with_doom_pool(self):
+    def test_flourish_doom_retired_falls_back_to_cry(self):
+        # doom→hide 已随 hide 入禁用区整段注释：归宿待主人拍板（候选
+        # cry/shock/恢复hide），当前落回 error→cry 兜底，禁用台词池不复活
+        from petfw.drivers import rule as rule_mod
         cmds = RuleDriver().react({"type": "hook", "event": "error",
                                    "flourish": "doom", "streak": 3})
-        self.assertEqual(self._states(cmds), ["hide"])
-        says = self._says(cmds)
-        self.assertTrue(any(t in set(FLOURISH_DOOM_POOL) for t in says))
+        self.assertEqual(self._states(cmds), ["cry"])
+        for t in self._says(cmds):
+            self.assertIn(t, set(HOOK_ERROR_POOL))
+        self.assertFalse(hasattr(rule_mod, "FLOURISH_DOOM"),
+                         "FLOURISH_DOOM 池必须整体注释保留")
 
-    def test_flourish_comeback_love_hop_famous_line_kept(self):
+    def test_flourish_comeback_dance_hop_famous_line_kept(self):
+        # love 已入禁用区：翻盘改扭舞庆祝，Hop 与著名台词原样保留
         cmds = RuleDriver().react({"type": "hook", "event": "success",
                                    "flourish": "comeback", "streak": 3})
-        self.assertEqual(self._states(cmds), ["love"])
+        self.assertEqual(self._states(cmds), ["dance"])
         self.assertTrue(any(isinstance(c, bus.Hop) for c in cmds))
         # 著名台词原样保留
         self.assertEqual(self._says(cmds),
@@ -435,14 +442,13 @@ class TestRuleTriggerMatrix(unittest.TestCase):
         for t in says:
             self.assertIn(t, IDLE_HOP_LINES)
 
-    def test_alien_blushmax_lines_reserved_without_auto_trigger(self):
+    def test_alien_blushmax_lines_retired_with_zone(self):
         from petfw.drivers import rule as rule_mod
-        # 台词池已备好，留给未来钩子
-        self.assertEqual(list(getattr(rule_mod, "ALIEN_LINES")),
-                         ["哔哔——检测到非法可爱，强制吸收"])
-        self.assertEqual(list(getattr(rule_mod, "BLUSHMAX_LINES")),
-                         ["不要再说了啦……(白眼翻向天花板)"])
-        # 但暂无自动触发：同名外部事件走 idle 兜底，不切换到这两个状态
+        # alien/blushmax 已入禁用区：预留台词池整体注释保留（不再存活），
+        # 同名外部事件依旧走 idle 兜底，绝不指向禁用态
+        for attr in ("ALIEN_LINES", "BLUSHMAX_LINES"):
+            self.assertFalse(hasattr(rule_mod, attr),
+                             f"{attr} 应随禁用区整体注释保留")
         for ev in NEW_FIVE:
             if ev not in ("alien", "blushmax"):
                 continue
@@ -452,7 +458,7 @@ class TestRuleTriggerMatrix(unittest.TestCase):
 
 
 class TestBridgeNewEvents(unittest.TestCase):
-    """bridge praise / kiss 自定义事件一路贯通到规则脑 love。"""
+    """bridge praise / kiss 自定义事件一路贯通到规则脑 dance（原 love 已禁用）。"""
 
     def setUp(self):
         self.srv = BridgeServer(0, "tok")
@@ -470,11 +476,12 @@ class TestBridgeNewEvents(unittest.TestCase):
         cmds = RuleDriver().react(item)
         return [c.state for c in cmds if isinstance(c, bus.SetState)]
 
-    def test_bridge_praise_event_drives_rule_to_love(self):
-        self.assertEqual(self._drive_via_bridge("praise"), ["love"])
+    def test_bridge_praise_event_drives_rule_to_dance(self):
+        # love 已入禁用区：praise/kiss 改开心到跳舞（台词池不变）
+        self.assertEqual(self._drive_via_bridge("praise"), ["dance"])
 
-    def test_bridge_kiss_event_drives_rule_to_love(self):
-        self.assertEqual(self._drive_via_bridge("kiss"), ["love"])
+    def test_bridge_kiss_event_drives_rule_to_dance(self):
+        self.assertEqual(self._drive_via_bridge("kiss"), ["dance"])
 
     def test_praise_pool_is_shared_by_praise_and_kiss(self):
         # 台词池已迁移为 rule.PRAISE_LINES（原 CLICK_LINES 池 + 原两句），
@@ -530,14 +537,26 @@ class TestManifest(unittest.TestCase):
         # 双向弱包含代替强相等：允许两边分支各自先行扩展，合并后自然闭合。
         # 专属演出动作（alien_suck）只在 manifest 登记、不进 SetState 词表，
         # 但必须在 host.ACTION_ONLY 里声明，防止 manifest 出现野名字。
+        # 五态精简：alien_suck 等八条住在顶层 "_disabled_states" 禁用区，
+        # 活动区 + 禁用区合起来仍不许超出词表 ∪ ACTION_ONLY。
         from petfw.host import ACTION_ONLY
+        manifest = json.loads(
+            (pathlib.Path(__file__).resolve().parents[1]
+             / "assets" / "manifest.json").read_text(encoding="utf-8"))
+        mk = set(manifest["states"].keys())
+        zone = set(manifest.get("_disabled_states", {}).keys())
         core = set(getattr(bus, "CORE_STATES", ()))
-        mk = set(self._manifest_states().keys())
         allst = set(bus.STATES)
-        self.assertTrue(core <= mk)
-        self.assertTrue(mk <= allst | set(ACTION_ONLY))
-        self.assertEqual(set(ACTION_ONLY) - allst, mk - allst,
-                         "manifest 里的专属动作必须与 ACTION_ONLY 一一对应")
+        # 核心态必须登记在案——五态精简后被禁用的（如 eat）住禁用区也算在册
+        self.assertTrue(core <= mk | zone,
+                        "核心态至少要登记在活动区或禁用区之一")
+        self.assertTrue((core - zone) <= mk,
+                        "未被禁用的核心态必须仍留在活动区")
+        self.assertLessEqual(mk | zone, allst | set(ACTION_ONLY))
+        self.assertEqual(set(ACTION_ONLY) - allst, zone - allst,
+                         "禁用区里的专属动作必须与 ACTION_ONLY 一一对应")
+        self.assertIn("alien_suck", zone)
+        self.assertNotIn("alien_suck", mk)
 
     def test_manifest_entries_have_animation_fields(self):
         for name, spec in self._manifest_states().items():

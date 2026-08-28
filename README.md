@@ -1,16 +1,19 @@
 # 自定义桌宠框架
 
 数据驱动、可插拔大脑、离线可玩的本地桌宠：一只圆滚滚的白色小宠物
-（默认昵称「团子」）挂在桌面右上角浮动卖萌，会干饭、会打气、会犯困，
-被戳了会说话。**大模型只用来对话，其它一切功能 100% 本地**——没网、没配 key
-也能完整地玩。
+（默认昵称「团子」）挂在桌面右上角浮动卖萌，会扭舞、会打气、会犯困、
+被戳了会惊讶会哭唧唧。**大模型只用来对话，其它一切功能 100% 本地**——
+没网、没配 key 也能完整地玩。
 
 ## 功能
 
-- **表情动画**：核心四态（发呆 / 举花球打气 / 举叉子干饭 / 睡觉）+ 可选新四态
-  （笑哭 / 惊讶 / 生气 / 扭舞），各自不同的浮动节奏；可选态缺图时自动降级跳过，
-  补图即解锁。多帧表情经 30fps 密度烘焙加密过渡（循环时长不变、画面更丝滑），
-  渲染节拍可用 `config.ini` 的 `[pet] tick_ms` 调节（缺省 33，省电可改 66）
+- **表情动画（五态精简）**：主人拍板日常保留五件套——发呆 / 睡觉 /
+  扭舞 / 惊讶 / 哭唧唧（外加打气做系统庆祝）；laugh/eat/love/hide/alien/
+  blushmax/angry 与 UFO 吸入演出已整体移入 manifest 的 `_disabled_states`
+  禁用区，菜单自动消失、数据完整可恢复（搬回 `states` 即上线）。
+  多帧表情经 30fps 密度烘焙加密过渡，once 演出经 12 帧「收招回 idle」
+  转场补帧自然谢幕（约 0.4 秒），渲染节拍可用 `config.ini` 的
+  `[pet] tick_ms` 调节（缺省 33，省电可改 66）
 - **双大脑可热切换**（托盘菜单）：
   - 规则脑：查表+随机台词，离线兜底，永不断线
   - 对话脑：调你自己的 OpenAI 兼容网关，宠物自己决定说什么+什么表情；
@@ -26,8 +29,8 @@
   「三十年河东 三十年河西！」
 - **过审小剧场**：对话脑每句台词约六分之一概率盖上「（本句已过审，
   审核笑了 N 分钟)」的恶搞章
-- **天气心情灯**：晴→打气、雨雪→睡觉（本地演示菜单；联网抓取由你自己的
-  本地脚本完成，见下方红线）
+- **天气心情灯**：晴→打气、雨雪→睡觉（天气扩展与桥接事件保留；菜单演示
+  入口经主人拍板暂时下线，联网抓取由你自己的本地脚本完成，见下方红线）
 
 ## 快速开始
 
@@ -35,9 +38,9 @@
 pip install -r requirements.txt
 
 # 1) 放入你的角色图（见「素材红线」，仓库不含任何图片）
-#    按 assets/raw/<状态名>.png 命名：
-#    核心态 idle.png / cheer.png / eat.png / sleep.png（缺了起不来）
-#    可选态 laugh.png / shock.png / angry.png / dance.png（缺了只跳过不报错）
+#    按 assets/raw/<状态名>.png 命名，五态精简后的活动区名单：
+#    idle.png / cheer.png / sleep.png / shock.png / dance.png / cry.png
+#    （缺了只跳过不报错；禁用区状态补图并搬回 manifest states 即解锁）
 python prep_assets.py        # 自动抠透明底并裁剪
 
 # 2) 启动
@@ -54,9 +57,10 @@ token 每次启动都会轮换，所以不要在 hook 里写死它，统一用�
 
 ```bash
 python -m petfw.react start     # 开始干活 → 打气
-python -m petfw.react edit      # 改代码   → 干饭（让我看看改了啥）
+python -m petfw.react edit      # 改代码   → 发呆围观（让我看看改了啥）
 python -m petfw.react success   # 成功    → 打气庆祝
-python -m petfw.react error     # 出错    → 躺平睡觉
+python -m petfw.react praise    # 被夸    → 开心到跳舞
+python -m petfw.react error     # 出错    → 哭唧唧（连败 3 起归宿待拍板，暂同 error）
 ```
 
 把上面的命令挂进你的 coding agent hooks（如 PostToolUse/Stop）即可。

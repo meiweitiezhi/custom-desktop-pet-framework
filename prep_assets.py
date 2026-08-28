@@ -25,6 +25,12 @@ dance 等 61 帧全帧档天生丝滑，明确跳过。
 输出 <状态>_D{idx:03d}.png，并在 manifest 写 source_frames/source_loop_ms
 标记烘焙源头；重烘焙永远从 source_frames 指向的原始 _f 姿态源出发，
 绝不拿 _S/_D 插帧帧再插帧（防糊成鬼影叠影）。
+
+转场补帧管线（任务三）：extend_return_transition 给 once 状态追加
+「收招回 idle」渐变帧——取序列末帧与 idle.png 生成 12 张（含首尾端点）
+<状态>_T{idx:03d}.png 追加到 frames 尾部，frame_ms 不变（33ms 载波下
+约 0.4 秒）；重复执行先清旧 _T 帧再生成（幂等）；末帧本就是 idle 姿态时
+（如 _D 烘焙自带收招定格）直接复用 idle 图免逐帧混合。
 """
 import json
 import math
@@ -473,6 +479,95 @@ def bake_all_smooth_v2(manifest_path: Path = MANIFEST, states_dir: Path = OUT,
     if patch:
         merge_manifest_entries(patch, manifest_path)
     return patch
+
+
+# ---------------------------------------------------------------- 转场补帧管线
+# 转场帧命名标签：大写 T 与旧 _f（抽稀）/_F（全帧）/_S（v1）/_D（v2）区分
+TRANSITION_TAG = "T"
+# 缺省转场帧数：12 张（含首尾端点），30fps 载波 33ms 下约 0.4 秒
+RETURN_TRANSITION_FRAMES = 12
+
+
+def clear_transition_frames(states_dir, name: str) -> int:
+    """清掉某状态旧的 _T 转场帧文件，返回删除张数（幂等重跑的前置工序）。"""
+    n = 0
+    for old in sorted(Path(states_dir).glob(
+            f"{name}_{TRANSITION_TAG}[0-9][0-9][0-9].png")):
+        old.unlink()
+        n += 1
+    return n
+
+
+def extend_return_transition(states_dir, manifest_path, targets,
+                             frames: int = RETURN_TRANSITION_FRAMES) -> dict:
+    """给 once 状态追加「收招回 idle」转场帧，同步写回 manifest。
+
+    对 targets 里每个条目：
+    1. 只处理 manifest["states"] 里 play=once 且带帧序列的多帧状态——
+       禁用区条目 / 缺条目 / 常驻态（loop，如 sleep）一律警告跳过；
+    2. 幂等清场：先删磁盘旧 _T 帧、再把 frames 里的旧 _T 引用剔除；
+    3. 取序列末帧与 idle.png，生成 frames 张渐变帧（含首尾端点）追加到
+       frames 列表尾部，命名 <状态>_T{idx:03d}.png，frame_ms 不变——
+       33ms 载波下 12 帧约 0.4 秒，表演收尾不再硬切回待机；
+    4. 末帧本就是 idle 姿态时（_D 烘焙自带收招定格的 shock/cry 等）
+       直接复用 idle 图，不做无谓的逐帧混合；
+    5. 返回 {"状态名": 新frames列表}；没有任何目标命中就不写 manifest。
+    """
+    states_dir = Path(states_dir)
+    manifest_path = Path(manifest_path)
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    states = data.get("states") or {}
+    try:
+        n_frames = max(2, int(frames))   # 少于 2 张无法「含首尾」，钳回 2
+    except (TypeError, ValueError):
+        n_frames = RETURN_TRANSITION_FRAMES
+    idle = Image.open(states_dir / "idle.png").convert("RGBA")
+    done: dict[str, list] = {}
+    for name in targets:
+        entry = states.get(name)
+        rels = (entry or {}).get("frames")
+        if not isinstance(rels, (list, tuple)) or not rels:
+            print(f"[转场] {name}: 跳过（条目缺失/已禁用/没有帧序列）")
+            continue
+        if str(entry.get("play") or "loop").strip().lower() != "once":
+            print(f"[转场] {name}: 跳过（非 once 常驻态无收尾）")
+            continue
+        base_rels = [str(r).replace("\\", "/") for r in rels
+                     if not Path(str(r)).name.startswith(
+                         f"{name}_{TRANSITION_TAG}")]
+        if not base_rels:
+            print(f"[转场] {name}: 跳过（清掉旧 _T 引用后没有实质帧）")
+            continue
+        clear_transition_frames(states_dir, name)
+        last = Image.open(states_dir / Path(base_rels[-1]).name).convert("RGBA")
+        target = idle.resize(last.size) if idle.size != last.size else idle
+        # 注意：RGBA 的 difference().getbbox() 会被全零 alpha 通道掩盖
+        # （RGB 明明不同也返回 None），判定「末帧==idle」必须比 RGB 通道
+        if ImageChops.difference(
+                last.convert("RGB"), target.convert("RGB")).getbbox() is None:
+            # 末帧就是 idle 姿态：直接复用 idle 图，免逐帧混合
+            seq = [target.copy() for _ in range(n_frames)]
+        else:
+            seq = [Image.blend(last, target, i / (n_frames - 1))
+                   for i in range(n_frames)]
+        new_rels = list(base_rels)
+        for i, fr in enumerate(seq):
+            fname = f"{name}_{TRANSITION_TAG}{i:03d}.png"
+            fr.save(states_dir / fname)
+            new_rels.append(f"states/{fname}")
+        entry["frames"] = new_rels
+        done[name] = new_rels
+        try:
+            ms = int(entry.get("frame_ms") or 0)
+        except (TypeError, ValueError):
+            ms = 0
+        print(f"[转场] {name}: 追加 {len(seq)} 张 _T 帧 "
+              f"(+{len(seq) * ms}ms) -> {len(new_rels)} 帧")
+    if done:
+        manifest_path.write_text(
+            json.dumps(data, ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8")
+    return done
 
 
 # ---------------------------------------------------------------- 全帧动作管线

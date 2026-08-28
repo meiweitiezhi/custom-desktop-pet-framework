@@ -39,9 +39,12 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
 音效零素材：`petfw/sound_core.py` 运行期用标准库合成八种短音效（WAV 落系统临时目录），
 宿主 `PetWindow.play()` 经 QSoundEffect 播放并全程静默降级，改声音手感只动 sound_core。
 左键单击/双击由宿主专属接管（判定纯逻辑在 `petfw/click_flow.py`，280ms 可注入时钟窗口）：
-单击=固定句「不要戳我！！！！」+ `[sound] click_sfx` 专属音效（缺省回落 pop）+ hide 演出
-尾部定格 1.5 秒再回 idle，双击=`alien_suck` 吸入演出（synth_actions 烘焙 39 帧入库 manifest）
-+ 合成 suck 音效；结算画面打开期间点击一律忽略、不触发任何演出。
+单击=固定句「不要戳我！！！！」+ `[sound] click_sfx` 专属音效（缺省回落 pop）+ shock 演出
+尾部定格 1.2 秒再经转场帧回 idle，双击=点歌开跳（click.wav 原声 + dance 扭舞一段）；
+结算画面打开期间点击一律忽略、不触发任何演出。
+（五态精简，主人拍板 2026-08：hide/alien_suck 等八条已入 manifest 顶层
+`_disabled_states` 禁用区——loader 只读 `states`、显式忽略下划线顶层键，
+条目搬回即恢复；旧演出代码一律注释保留不物理删除。）
 
 ## 常见改动配方
 
@@ -59,13 +62,26 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
 
 **缺图降级规则（核心四态 vs 可选新态）**：
 - 核心四态 = idle/cheer/eat/sleep（`bus.CORE_STATES`）：任何一张缺图或损坏，
-  `load_states` 直接 `SystemExit` 报错退出——没有它们就撑不起角色形象；
+  `load_states` 直接 `SystemExit` 报错退出——没有它们就撑不起角色形象
+  （五态精简后被禁用的核心态如 eat 住在禁用区，不参与加载、不触发此规则）；
 - 可选新态（如 laugh/shock/angry/dance）：manifest 登记了但没图时，启动打印
   警告并跳过该状态；托盘菜单不出现该项，事件点到也只是维持当前表情不崩窗；
   用户补图重跑 `prep_assets.py` 即解锁，无需改代码；
-- 两边不许漂移：`assets/manifest.json` 登记的名字不许超出 `bus.STATES`，
-  且核心四态必须已登记（`tests/test_core.py::TestManifest` 强制）；可选新态
-  允许先注册进 `bus.STATES`、图片后补到位再跑 prep_assets.py 解锁。
+- 两边不许漂移：`assets/manifest.json` 登记的名字（活动区+禁用区合计）
+  不许超出 `bus.STATES`，且核心态必须登记在册（活动区或禁用区皆算，
+  未禁用的核心态必须留活动区，`tests/test_core.py::TestManifest` 强制）；
+  可选新态允许先注册进 `bus.STATES`、图片后补到位再跑 prep_assets.py 解锁。
+
+### 禁用/恢复一个表情状态（五态精简配方）
+
+- **禁用**：把该条目从 manifest 的 `states` 整体搬到顶层
+  `_disabled_states`（下划线开头）——菜单自动消失、触发自动失效；
+  同步把 rule.py 指向它的映射/台词池按「注释保留哲学」注释掉，
+  就近改绑到五件套（idle/sleep/dance/shock/cry）。
+- **恢复**：把条目搬回 `states`、解开注释即可，数据全程不删。
+- loader 只认 `states`：`host.active_states()` 显式忽略一切下划线开头的
+  顶层键，`tests/test_five_states.py` 锁死该机制（禁用区断言：在
+  `_disabled_states` 里且 `states` 里没有）。
 
 ### 逐帧动画与动作点播（animator_core + ActionPlayer）
 
@@ -91,6 +107,14 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
 - **菜单单一来源**：本体右键(contextMenuEvent)与托盘共用
   `PetWindow.build_actions_menu(menu, window)`：情绪/整活/系统三段分组，
   词条只列已加载出图的状态，缺图自动隐藏。改菜单只改这一处。
+  五态精简后「天气演示」「模拟hook(edit)」经主人拍板暂时下线
+  （构建器里整段注释保留，weather 扩展与桥接通路不动）。
+- **转场补帧（once 收招不再硬切）**：`prep_assets.extend_return_transition()`
+  给 once 状态追加 12 张「末帧→idle」渐变帧（`<状态>_T{idx:03d}.png`，
+  含首尾端点、frame_ms 不变、幂等重跑先清旧 _T 帧）。手动执行：
+  `python -c "import prep_assets as p; p.extend_return_transition(p.OUT, p.MANIFEST, ('shock','cry','dance'))"`。
+  常驻态（loop，如 sleep）无收尾语义自动跳过；末帧本就是 idle 的条目
+  （_D 烘焙自带收招定格）直接复用 idle 图免逐帧混合。
 - **结算画面联动保留但走新引擎**：结算 opened 改调
   `play_action("dance", play="loop")` 循环扭舞到关窗，closed 直接叫停
   播放器并恢复打开前的表情。

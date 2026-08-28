@@ -159,7 +159,7 @@ class TestHostClickShows(unittest.TestCase):
         win.play = rec.play
         return win, rec
 
-    def test_single_click_fixed_line_and_hide_hold(self):
+    def test_single_click_fixed_line_and_shock_hold(self):
         from petfw import bus
         win, rec = self._win()
         win._perform_single_click()
@@ -167,9 +167,9 @@ class TestHostClickShows(unittest.TestCase):
         say = rec.applied[0]
         self.assertIsInstance(say, bus.Say)
         self.assertEqual(say.text, "不要戳我！！！！", "固定句一字不许改")
-        self.assertEqual(rec.played, [("hide", None, 1500)],
-                         "hide 演出必须带 1500ms 尾部定格")
-        self.assertEqual(rec.click_sfx_plays, 1)
+        self.assertEqual(rec.played, [("shock", None, 1200)],
+                         "单击改演 shock，且必须带 1200ms 尾部定格")
+        self.assertEqual(rec.click_sfx_plays, 1, "click.wav 播放保持不变")
 
     def test_single_click_silent_during_settlement(self):
         win, rec = self._win(settlement_open=True)
@@ -178,11 +178,13 @@ class TestHostClickShows(unittest.TestCase):
         self.assertEqual(rec.played, [])
         self.assertEqual(rec.click_sfx_plays, 0)
 
-    def test_double_click_suck_show(self):
+    def test_double_click_dance_show_with_click_sfx(self):
+        """双击=点歌开跳：click.wav（原声）+ dance 演出，UFO 吸入退役。"""
         win, rec = self._win()
         win._perform_double_click()
-        self.assertEqual(rec.suck_plays, 1)
-        self.assertEqual(rec.played, [("alien_suck", None, None)])
+        self.assertEqual(rec.suck_plays, 0, "合成 suck 音效必须一并退役")
+        self.assertEqual(rec.played, [("dance", None, None)])
+        self.assertEqual(rec.click_sfx_plays, 1, "双击要播 click.wav 原声")
         self.assertEqual(rec.applied, [], "双击不弹气泡")
 
     def test_double_click_silent_during_settlement(self):
@@ -190,6 +192,7 @@ class TestHostClickShows(unittest.TestCase):
         win._perform_double_click()
         self.assertEqual(rec.suck_plays, 0)
         self.assertEqual(rec.played, [])
+        self.assertEqual(rec.click_sfx_plays, 0)
 
 
 if __name__ == "__main__":

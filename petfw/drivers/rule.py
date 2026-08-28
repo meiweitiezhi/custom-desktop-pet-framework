@@ -35,7 +35,8 @@ REMINDER_LINES = {
 }
 
 HOOK_LINES = {
-    "edit": ("eat", ["让我看看改了啥好吃的", "键盘真香…"]),
+    # eat 已入禁用区（五态精简）：改回发呆旁观，台词保留
+    "edit": ("idle", ["让我看看改了啥好吃的", "键盘真香…"]),
     "success": ("cheer", ["搞定！夸我夸我！", "成功啦！花球甩起来！"]),
     # 报错不再躺平：当场哭唧唧，委屈值拉满
     "error": ("cry", ["呜哇——又挂了…",
@@ -44,9 +45,9 @@ HOOK_LINES = {
     "test": ("idle", ["测试跑着呢，我盯着呢"]),
     "start": ("cheer", ["开工！我给你举花球！"]),
     "done": ("cheer", ["收工！今晚吃叉子大餐！"]),
-    # 外部程序可直接发自定义事件（bridge 不限词表）：被夸/被亲 → 比小心心
-    "praise": ("love", PRAISE_LINES),
-    "kiss": ("love", PRAISE_LINES),
+    # love 已入禁用区（五态精简）：被夸/被亲 = 开心到跳舞，台词池保留
+    "praise": ("dance", PRAISE_LINES),
+    "kiss": ("dance", PRAISE_LINES),
 }
 
 IDLE_HOP_LINES = ["嗯？什么声音", "(眨眼)", "zzang~"]
@@ -63,16 +64,19 @@ GROWTH_UP_LINES = [
     "叮——称号进化！快夸快夸！",
 ]
 
-# 编译兴衰军师的判定台词：翻盘庆祝 / 连败哀叹
-# 翻盘保留著名台词，状态改比小心心并附带蹦跶；连败缩进帽子里躲着反省
-FLOURISH_COMEBACK = ("love", ["三十年河东 三十年河西！这不就翻盘了！"])
-FLOURISH_DOOM = ("hide", ["让我在这顶帽子里反省一下人生",
-                          "世界暂时与我无关，勿cue"])
+# 编译兴衰军师的判定台词：翻盘保留著名台词，状态改扭舞庆祝
+# （原 love 映射已随五态精简入禁用区，被夸/翻盘 = 开心到跳舞）
+FLOURISH_COMEBACK = ("dance", ["三十年河东 三十年河西！这不就翻盘了！"])
+# 【禁用区】连败三次的 hide 归宿随 hide 态下线，整段注释保留、数据可恢复。
+# TODO: 连败三次归宿待主人拍板：候选项 cry / shock / 恢复hide。
+# 拍板前 doom 落回普通事件映射（error→cry）兜底，绝不指向禁用态。
+# FLOURISH_DOOM = ("hide", ["让我在这顶帽子里反省一下人生",
+#                           "世界暂时与我无关，勿cue"])
 
-# 预留台词池：alien（外星吸人）/ blushmax（羞耻爆炸）暂无自动触发，
-# 状态本身已合法可托盘手选，这里先备好文案留给未来钩子接入。
-ALIEN_LINES = ["哔哔——检测到非法可爱，强制吸收"]
-BLUSHMAX_LINES = ["不要再说了啦……(白眼翻向天花板)"]
+# 【禁用区】预留台词池随 alien（外星吸人）/ blushmax（羞耻爆炸）两态
+# 整体注释保留，恢复状态时一并解封：
+# ALIEN_LINES = ["哔哔——检测到非法可爱，强制吸收"]
+# BLUSHMAX_LINES = ["不要再说了啦……(白眼翻向天花板)"]
 
 
 class RuleDriver(Driver):
@@ -85,15 +89,18 @@ class RuleDriver(Driver):
             if t == "reminder":
                 kind = event.get("kind") if event.get("kind") in REMINDER_LINES else "drink"
                 cmds = [
-                    bus.SetState("eat" if kind == "drink" else "sleep"),
+                    # eat 已入禁用区（干饭被砍）：喝水提醒改为回发呆 + 台词
+                    bus.SetState("idle"),
                     bus.Say(random.choice(REMINDER_LINES[kind]), seconds=10),
                 ]
             elif t == "hook":
                 flourish = event.get("flourish")
                 if flourish == "comeback":
                     spec = FLOURISH_COMEBACK
-                elif flourish == "doom":
-                    spec = FLOURISH_DOOM
+                # 【禁用区】doom→hide 分支整段注释保留，新归宿待主人拍板：
+                # 候选项 cry / shock / 恢复hide；当前落回普通事件映射兜底。
+                # elif flourish == "doom":
+                #     spec = FLOURISH_DOOM
                 else:
                     spec = HOOK_LINES.get(event.get("event"))
                 if spec is None:

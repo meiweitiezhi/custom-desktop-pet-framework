@@ -64,18 +64,25 @@ STATE_ZH = {
 
 # 右键动作菜单的两组状态词条；系统组条目在构建器里现场生成。
 # 只渲染 self.states 里已加载出图的状态，缺图自动缺席隐藏。
-MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
-                "laugh", "shock", "angry", "dance")
-MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
+# 五态精简（主人拍板 2026-08）：laugh/eat/angry、hide/love/alien/blushmax
+# 已随 manifest["_disabled_states"] 入禁用区，词条注释保留、随时可恢复。
+MENU_EMOTION = ("idle", "cheer", "sleep", "shock", "dance")
+# MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
+#                 "laugh", "shock", "angry", "dance")
+MENU_FUN = ("cry",)
+# MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
 
 # 专属演出动作：只在 manifest 登记与动作菜单出现，不进 bus.STATES 词表
 # （不是表情状态，SetState 不认；演出一律走 play_action 点播）。
+# alien_suck 现居 manifest 禁用区，声明保留以维持 manifest 防漂移检查。
 ACTION_ONLY = ("alien_suck",)
 ACTION_ZH = {"alien_suck": "UFO 吸入"}
 
-# 左键单击专属演出参数：固定句、hide 尾部定格时长（宿主接管，不走驱动）
+# 左键单击专属演出参数：固定句、shock 尾部定格时长（宿主接管，不走驱动）
 CLICK_TEASE = "不要戳我！！！！"
-HIDE_HOLD_TAIL_MS = 1500
+SHOCK_HOLD_TAIL_MS = 1200
+# 【禁用区】旧单击 hide 定格参数随 hide 态下线，注释保留：
+# HIDE_HOLD_TAIL_MS = 1500
 
 
 def defer_if_playing(pending, playing, wanted):
@@ -91,6 +98,17 @@ def defer_if_playing(pending, playing, wanted):
 
 
 # ---------------------------------------------------------------- 素材加载
+def active_states(manifest: dict) -> dict:
+    """manifest 的活动状态表：只认 "states" 键，顶层下划线保留键显式忽略。
+
+    下划线开头的顶层键（如 "_disabled_states" 禁用区、未来的元数据键）是
+    数据搁架，绝不参与加载与触发——把条目搬回 "states" 即视为恢复上线。
+    """
+    return {
+        k: v for k, v in manifest.items() if not str(k).startswith("_")
+    }.get("states") or {}
+
+
 def entry_paths(name: str, spec: dict) -> list:
     """manifest 条目涉及的图片相对路径清单（双 schema）。
 
@@ -127,7 +145,7 @@ def collect_missing(states: dict, available_files) -> tuple:
 
 def load_states(display_size: int) -> dict:
     manifest = json.loads((ASSETS / "manifest.json").read_text(encoding="utf-8"))
-    entries = manifest["states"]
+    entries = active_states(manifest)   # 只读 states；"_disabled_states" 等下划线键一律忽略
     available = {p.relative_to(ASSETS).as_posix()
                  for p in ASSETS.rglob("*") if p.is_file()}
     missing_core, missing_optional = collect_missing(entries, available)
@@ -374,7 +392,7 @@ class PetWindow(QWidget):
         play 缺省读 manifest 的 v3 字段（play=once 完整播放一轮）；
         结算画面等需要持续演出的场合显式传 play="loop"。
         hold_tail_ms：once 尾部定格毫秒数；None 时回落 manifest 条目的
-        hold_tail_ms 字段（如单击 hide 演出传 1500 定格再回 idle）。
+        hold_tail_ms 字段（如单击 shock 演出传 1200 定格再回 idle）。
         无帧的单图状态退化为直接切换（安静待机语义），不进场表演。
         """
         spec = self.states.get(name)
@@ -518,23 +536,33 @@ class PetWindow(QWidget):
 
     # ---------------- 左键单/双击专属演出（宿主接管，不再 dispatch 驱动）----------------
     def _perform_single_click(self):
-        """单击：固定句气泡 + click.wav 专属音效 + hide 演出尾部定格 1.5 秒。
+        """单击：固定句气泡 + click.wav 专属音效 + shock 演出尾部定格 1.2 秒。
 
-        hide 序列尾部本就融向 idle，加 1500ms 末帧定格再自然回归，
-        衔接连贯、毫无重播/重启感。
+        五态精简后单击改演 shock（hide 已入禁用区）；shock 序列尾部经
+        转场补帧融向 idle，加 1200ms 末帧定格再自然回归，衔接连贯、
+        毫无重播/重启感。
         """
         if not should_perform(self.settlement_open):
             return
         self.apply([bus.Say(CLICK_TEASE)])
         self._play_click_sfx()
-        self.play_action("hide", hold_tail_ms=HIDE_HOLD_TAIL_MS)
+        self.play_action("shock", hold_tail_ms=SHOCK_HOLD_TAIL_MS)
+        # 【禁用区】旧 hide 定格演出（1500ms），主人拍板暂时下线，可随时恢复：
+        # self.play_action("hide", hold_tail_ms=HIDE_HOLD_TAIL_MS)
 
     def _perform_double_click(self):
-        """双击：合成 suck 音效 + alien_suck 全套（升空吸入 + 空场留白）。"""
+        """双击=点歌开跳：click.wav（「时间来不及了」原声）+ dance 扭舞一段。
+
+        dance 是 once+return_to=idle，序列尾部经转场补帧融回 idle，
+        跳完自然谢幕；结算画面打开期间照旧一律忽略。
+        """
         if not should_perform(self.settlement_open):
             return
-        self.play("suck")
-        self.play_action("alien_suck")
+        self._play_click_sfx()
+        self.play_action("dance")
+        # 【禁用区】旧 UFO 吸入演出整段注释保留（alien_suck 已入禁用区）：
+        # self.play("suck")
+        # self.play_action("alien_suck")
 
     def _play_click_sfx(self):
         """播 [sound] click_sfx 指向的本地 wav（独立 QSoundEffect 实例）。
@@ -725,14 +753,17 @@ class PetWindow(QWidget):
         # —— 系统组：复用宿主既有槽方法，绝不复制逻辑 ——
         _header("系统")
         menu.addAction("今日战报", window.scan_growth)
-        wx_menu = menu.addMenu("天气演示")
-        for zh_w, cond in (("晴", "Clear"), ("多云", "Clouds"),
-                           ("雨", "Rain"), ("雪", "Snow")):
-            wx_menu.addAction(zh_w, lambda c=cond: window.dispatch(
-                {"type": "weather", "condition": c}))
-        # 模拟 hook 与桥接入口走同一关卡（_on_hook）
-        menu.addAction("模拟hook(edit)", lambda: window._on_hook(
-            {"type": "hook", "event": "edit"}))
+        # 【主人拍板暂时下线】天气演示词条整体注释保留，weather 扩展本体与
+        # dispatch 事件通路不动，随时可恢复菜单入口：
+        # wx_menu = menu.addMenu("天气演示")
+        # for zh_w, cond in (("晴", "Clear"), ("多云", "Clouds"),
+        #                    ("雨", "Rain"), ("雪", "Snow")):
+        #     wx_menu.addAction(zh_w, lambda c=cond: window.dispatch(
+        #         {"type": "weather", "condition": c}))
+        # 【主人拍板暂时下线】模拟 hook 词条注释保留；桥接入口仍走同一关卡
+        # （_on_hook），外部程序照常可以投喂 edit 事件：
+        # menu.addAction("模拟hook(edit)", lambda: window._on_hook(
+        #     {"type": "hook", "event": "edit"}))
         act_reminder = menu.addAction("健康提醒")
         act_reminder.setCheckable(True)
         act_reminder.setChecked(window.reminder_timer.isActive())

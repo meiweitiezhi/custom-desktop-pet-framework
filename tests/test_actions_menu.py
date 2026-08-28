@@ -60,9 +60,9 @@ class _FakeWindow:
         self.quits += 1
 
 
-# 真实仓库现状：angry 无素材图缺席；其余十二态与专属动作 alien_suck 均已出图
-LOADED = ["idle", "cheer", "eat", "sleep", "laugh", "shock",
-          "dance", "cry", "hide", "love", "alien", "blushmax", "alien_suck"]
+# 五态精简后的真实仓库现状：活动区=五件套+cheer（打气）；
+# laugh/eat/hide/love/alien/blushmax/alien_suck 已入 manifest._disabled_states
+LOADED = ["idle", "cheer", "sleep", "shock", "dance", "cry"]
 
 
 def _texts(menu: QMenu) -> list:
@@ -77,38 +77,35 @@ class TestActionsMenu(unittest.TestCase):
 
     def test_emotion_and_fun_groups_list_only_loaded_states(self):
         texts = _texts(self.menu)
-        # 八正态：生气(angry)没素材必须缺席隐藏；其余直呼其字全部在列
-        for zh in ("发呆", "打气", "干饭", "睡觉", "笑哭", "惊讶", "扭舞"):
+        # 五态精简：情绪组=发呆/打气/睡觉/惊讶/扭舞，整活组只剩哭唧唧
+        for zh in ("发呆", "打气", "睡觉", "惊讶", "扭舞", "哭唧唧"):
             self.assertIn(zh, texts)
-        self.assertNotIn("生气", texts, "缺图状态绝不能出现在菜单里")
-        for zh in ("哭唧唧", "缩帽躲", "比小心心", "外星吸人", "羞耻爆炸",
-                   "UFO 吸入"):
-            self.assertIn(zh, texts)
+        # 禁用七态 + UFO 吸入必须整词缺席（数据在 _disabled_states 里）
+        for zh in ("干饭", "笑哭", "生气", "缩帽躲", "比小心心", "外星吸人",
+                   "羞耻爆炸", "UFO 吸入"):
+            self.assertNotIn(zh, texts, f"禁用态「{zh}」不得出现在菜单")
         # 三段分组之间要有分隔线，且构建菜单本身不许顺带触发任何动作
         seps = [a for a in self.menu.actions() if a.isSeparator()]
         self.assertGreaterEqual(len(seps), 2)
         self.assertEqual(self.win.played, [], "构建菜单本身不许触发动作")
 
-    def test_ufo_suck_triggers_play_action(self):
+    def test_dance_entry_triggers_play_action(self):
         acts = {a.text(): a for a in self.menu.actions()
                 if not a.isSeparator()}
-        acts["UFO 吸入"].trigger()
-        self.assertEqual(self.win.played, ["alien_suck"])
+        acts["扭舞"].trigger()
+        self.assertEqual(self.win.played, ["dance"])
 
     def test_system_group_reuses_window_slots(self):
         acts = {a.text(): a for a in self.menu.actions()
                 if not a.isSeparator()}
         acts["今日战报"].trigger()
         self.assertEqual(self.win.scanned, 1)
-        hook_act = next(t for t in acts if t.startswith("模拟hook"))
-        acts[hook_act].trigger()
-        self.assertEqual(self.win.hooks,
-                         [{"type": "hook", "event": "edit"}])
-        wx = acts["天气演示"].menu()
-        self.assertIsNotNone(wx, "天气演示应保留四档子菜单")
-        wx.actions()[0].trigger()
-        self.assertEqual(self.win.dispatched,
-                         [{"type": "weather", "condition": "Clear"}])
+        # 主人拍板暂时下线：天气演示与模拟hook(edit) 词条整体消失
+        # （weather 扩展本体与 bridge 事件通路保留，只是没有菜单入口）
+        self.assertNotIn("天气演示", acts)
+        for t in acts:
+            self.assertFalse(t.startswith("模拟hook"),
+                             "模拟hook(edit) 词条应已下线")
         rem = acts["健康提醒"]
         self.assertTrue(rem.isCheckable())
         self.assertTrue(rem.isChecked(), "开关初始态要镜像提醒定时器")
@@ -119,25 +116,29 @@ class TestActionsMenu(unittest.TestCase):
 
 
 class TestManifestV3Fields(unittest.TestCase):
-    """任务二回归：动作字段、idle 微幅化、angry 单图现状不得被误伤。"""
+    """manifest 回归：动作字段、idle 微幅化、禁用区条目完整性不得被误伤。"""
+
+    def _manifest(self):
+        return json.loads(MANIFEST.read_text(encoding="utf-8"))
 
     def _states(self):
-        return json.loads(
-            MANIFEST.read_text(encoding="utf-8"))["states"]
+        return self._manifest()["states"]
 
     def test_multi_frame_states_play_once_and_return_to_idle(self):
         multi = {k: v for k, v in self._states().items() if v.get("frames")}
-        self.assertGreaterEqual(len(multi), 10, "至少十个状态带帧序列")
+        # 五态精简后活动区带帧序列的恰为这四个（含 shock/cry/dance 的 _T 转场帧）
+        self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry"})
         for name, spec in multi.items():
             self.assertEqual(spec.get("play"), "once",
                              f"{name} 缺 play=once")
             self.assertEqual(spec.get("return_to", "idle"), "idle",
                              f"{name} 的 return_to 默认必须是 idle")
 
-    def test_alien_suck_entry_shape(self):
-        """专属吸入动作：39 帧 @33ms、once、回 idle、无尾部定格。"""
-        spec = self._states().get("alien_suck")
-        self.assertIsNotNone(spec, "manifest 缺 alien_suck 条目")
+    def test_alien_suck_entry_shape_preserved_in_zone(self):
+        """专属吸入动作入禁用区：39 帧 @33ms、once、回 idle、无尾部定格。"""
+        zone = self._manifest()["_disabled_states"]
+        spec = zone.get("alien_suck")
+        self.assertIsNotNone(spec, "禁用区缺 alien_suck 条目")
         self.assertEqual(len(spec["frames"]), 26 + 13)
         self.assertEqual(spec["frame_ms"], 33)
         self.assertEqual(spec["play"], "once")
@@ -152,7 +153,8 @@ class TestManifestV3Fields(unittest.TestCase):
         idle = states["idle"]
         self.assertEqual(idle.get("bob_amp"), 2, "平时安静：呼吸幅度回 2")
         self.assertEqual(idle.get("tilt_deg"), 0)
-        angry = states["angry"]
+        # angry 本就缺图、如今整体入禁用区：单图现状原样冻结，随时可恢复
+        angry = self._manifest()["_disabled_states"]["angry"]
         self.assertNotIn("frames", angry, "angry 保持单图现状")
         self.assertNotIn("play", angry)
 
