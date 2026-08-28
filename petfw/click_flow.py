@@ -36,16 +36,20 @@ def should_perform(settlement_open: bool) -> bool:
     return not bool(settlement_open)
 
 
+DEFAULT_CLICK_SFX = "assets/local/click.wav"  # 「时间来不及了」原声，本地私有
+
+
 def resolve_click_sfx(raw, base_dir=None) -> str | None:
     """[sound] click_sfx 配置裁决：填了且文件存在才用专属音效。
 
-    相对路径相对 base_dir（仓库根 / exe 目录）解析；空值、文件不存在
-    一律返回 None，宿主据此回落内置 pop。绝不抛错。
+    相对路径相对 base_dir（仓库根 / exe 目录）解析；
+    **配置留空时默认尝试 assets/local/click.wav**（主人拍板的开箱即唱），
+    文件不存在一律返回 None，宿主据此回落内置 pop。绝不抛错。
     """
     try:
         text = str(raw or "").strip().strip('"').strip("'")
         if not text:
-            return None
+            text = DEFAULT_CLICK_SFX
         path = pathlib.Path(text)
         if not path.is_absolute() and base_dir is not None:
             path = pathlib.Path(base_dir) / text

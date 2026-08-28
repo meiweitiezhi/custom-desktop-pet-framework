@@ -102,9 +102,17 @@ class TestResolveClickSfx(unittest.TestCase):
         self.wav = self.tmp / "click.wav"
         self.wav.write_bytes(b"RIFF----WAVE")
 
-    def test_empty_falls_back_to_pop(self):
-        for raw in ("", "   ", None):
-            self.assertIsNone(resolve_click_sfx(raw, self.tmp), repr(raw))
+    def test_empty_defaults_to_local_click_wav(self):
+        # 配置留空 = 开箱即唱：默认尝试 assets/local/click.wav（相对 base_dir）
+        (self.tmp / "assets").mkdir()
+        (self.tmp / "assets" / "local").mkdir()
+        (self.tmp / "assets" / "local" / "click.wav").write_bytes(b"x")
+        got = resolve_click_sfx("", self.tmp)
+        self.assertEqual(pathlib.Path(got).name, "click.wav")
+        # 默认路径也不存在时才回落 pop
+        import tempfile
+        with tempfile.TemporaryDirectory() as td:
+            self.assertIsNone(resolve_click_sfx("", pathlib.Path(td)))
 
     def test_existing_file_returns_absolute_path(self):
         got = resolve_click_sfx(str(self.wav), self.tmp)
