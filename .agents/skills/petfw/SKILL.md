@@ -109,12 +109,15 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
   词条只列已加载出图的状态，缺图自动隐藏。改菜单只改这一处。
   五态精简后「天气演示」「模拟hook(edit)」经主人拍板暂时下线
   （构建器里整段注释保留，weather 扩展与桥接通路不动）。
-- **转场补帧（once 收招不再硬切）**：`prep_assets.extend_return_transition()`
-  给 once 状态追加 12 张「末帧→idle」渐变帧（`<状态>_T{idx:03d}.png`，
-  含首尾端点、frame_ms 不变、幂等重跑先清旧 _T 帧）。手动执行：
-  `python -c "import prep_assets as p; p.extend_return_transition(p.OUT, p.MANIFEST, ('shock','cry','dance'))"`。
-  常驻态（loop，如 sleep）无收尾语义自动跳过；末帧本就是 idle 的条目
-  （_D 烘焙自带收招定格）直接复用 idle 图免逐帧混合。
+- **转场补帧（once 收招不再硬切）**：主路径已换成
+  `prep_assets.bake_squash_return()` 压扁回弹转场——表演末帧与 idle 平滑压到
+  (sy 0.78, sx 1.18)（锚点=底部中心），恰在最大压扁帧换装到 idle 同比例压扁
+  帧（形状连续无叠影），再 ease_out_back 式经 1.12 过冲回弹落定；输出
+  `<状态>_Q{idx:03d}.png`（33ms→30 帧、41ms→24 帧，仪式约 1 秒），幂等重跑
+  先清 `_T`/`_Q` 两代旧帧；旧渐变方案 `extend_return_transition()`（12 张
+  `_T` 帧）保留供回滚。cheer 单图经 `bake_cheer_party()` 变 45 帧常驻搞笑
+  循环（play=loop，挥旗+猛压+粗转+星星爆开连招）。一键重烤：`python prep_assets.py --rebuild`
+  （压扁转场 + cheer 派对 + sleep 提速 90ms，确定性幂等）。
 - **结算画面联动保留但走新引擎**：结算 opened 改调
   `play_action("dance", play="loop")` 循环扭舞到关窗，closed 直接叫停
   播放器并恢复打开前的表情。

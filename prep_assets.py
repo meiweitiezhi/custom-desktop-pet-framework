@@ -26,18 +26,36 @@ dance 等 61 帧全帧档天生丝滑，明确跳过。
 标记烘焙源头；重烘焙永远从 source_frames 指向的原始 _f 姿态源出发，
 绝不拿 _S/_D 插帧帧再插帧（防糊成鬼影叠影）。
 
-转场补帧管线（任务三）：extend_return_transition 给 once 状态追加
-「收招回 idle」渐变帧——取序列末帧与 idle.png 生成 12 张（含首尾端点）
-<状态>_T{idx:03d}.png 追加到 frames 尾部，frame_ms 不变（33ms 载波下
-约 0.4 秒）；重复执行先清旧 _T 帧再生成（幂等）；末帧本就是 idle 姿态时
-（如 _D 烘焙自带收招定格）直接复用 idle 图免逐帧混合。
+转场补帧管线（任务三，已被压扁回弹方案接替）：extend_return_transition 给
+once 状态追加「收招回 idle」渐变帧——取序列末帧与 idle.png 生成 12 张
+（含首尾端点）<状态>_T{idx:03d}.png 追加到 frames 尾部，frame_ms 不变
+（33ms 载波下约 0.4 秒）；重复执行先清旧 _T 帧再生成（幂等）；末帧本就是
+idle 姿态时（如 _D 烘焙自带收招定格）直接复用 idle 图免逐帧混合。
+该函数保留供回滚对照，主路径已换成下面的压扁回弹转场。
+
+压扁回弹转场管线（transition-v2，主人拍板 2026-08）：bake_squash_return
+在最大压扁瞬间完成姿态切换（皮筋动画经典手法，形状连续无叠影）——表演
+末姿态 A 平滑压到 (sy 0.78, sx 1.18)（锚点=底部中心，向地板压），恰在
+最大压扁帧无缝换装到 idle 的同比例压扁帧，再 ease_out_back 式经 1.12
+过冲回弹落定为 idle；输出 <状态>_Q{idx:03d}.png，帧数随节拍折算
+（33ms→30 帧、41ms→24 帧，仪式时长都约 1 秒），幂等清 _T/_Q 两代旧帧。
+
+打气派对管线（任务二）：bake_cheer_party 把单图 cheer 整活成 45 帧常驻
+搞笑循环（play=loop）——两快两慢 ±18° 挥旗（带小跳与挥臂弧线残影）→
+蓄力猛压 0.75 弹过冲 1.15 → 原地 12 帧粗转一圈 → 顶点定格 3 帧+三颗
+五角星爆开 → 落地回弹收招，输出 cheer_D{idx:03d}.png。
+
+一键重烤入口：rebuild_all_animation_assets 按序执行压扁回弹转场
+（shock/cry/dance）+ cheer 派对 + sleep 播放提速并写回 manifest；
+python prep_assets.py --rebuild 直跑（幂等，可反复执行）。
 """
 import json
 import math
+import sys
 from collections import deque
 from pathlib import Path
 
-from PIL import Image, ImageChops
+from PIL import Image, ImageChops, ImageDraw
 
 from petfw.animator_core import DEFAULT_CAP, sample_frames
 
@@ -570,6 +588,392 @@ def extend_return_transition(states_dir, manifest_path, targets,
     return done
 
 
+# ---------------------------------------------------------------- 压扁回弹转场（transition-v2 主路径）
+# 转场帧命名标签：大写 Q 与旧 _f/_F/_S/_D/_T 区分；_T 与旧 _Q 都是历史遗留
+TRANSITION_TAG_V2 = "Q"
+LEGACY_TRANSITION_TAGS = ("T", TRANSITION_TAG_V2)
+SQUASH_TARGETS = ("shock", "cry", "dance")   # 主人拍板的三态
+SQUASH_SY_MIN = 0.78       # 第一幕终点：压到 78%（两图轮廓差异最小处）
+SQUASH_SX_MAX = 1.18       # 压扁同时横向鼓出，保体积
+SQUASH_OVERSHOOT = 1.12    # 第二幕过冲顶点（>1.08 可测）
+SQUASH_ACT1_SHARE = 0.4    # 第一幕帧数占比（其余归回弹幕）
+SQUASH_MIN_FRAMES = 8      # 帧数下限：再短就没有仪式感了
+# sleep 播放提速（主人拍板）：帧图不动，纯节拍 140→90ms
+SLEEP_SPEED_MS = 90
+
+
+def _ease_out_back_peak(peak: float) -> float:
+    """反解 ease_out_back 的过冲常数 s，使曲线峰值恰为 peak（二分，确定）。
+
+    标准 ease_out_back: f(u)=1+(s+1)(u-1)^3+s(u-1)^2，其峰值满足
+    4s^3 = 27(peak-1)(s+1)^2；s>=0 区间单调，64 轮二分收敛。
+    """
+    lo, hi = 0.0, 64.0
+    for _ in range(64):
+        mid = (lo + hi) / 2.0
+        if 4.0 * mid ** 3 - 27.0 * (peak - 1.0) * (mid + 1.0) ** 2 < 0:
+            lo = mid
+        else:
+            hi = mid
+    return (lo + hi) / 2.0
+
+
+def _back_ease(u: float, s: float) -> float:
+    """ease_out_back：0→1 且中途经 1+s 比例的过冲再回落（皮筋回弹手感）。"""
+    return 1.0 + (s + 1.0) * (u - 1.0) ** 3 + s * (u - 1.0) ** 2
+
+
+def _squash_pose(im: Image.Image, sx: float, sy: float) -> Image.Image:
+    """整幅画布按 (sx, sy) 缩放，锚点=底部中心——压扁向地板方向，不向中心缩。"""
+    if abs(sx - 1.0) < 1e-9 and abs(sy - 1.0) < 1e-9:
+        return im.copy()   # 恒等姿态直接原样拷贝（末帧==idle 的字节级保证）
+    w, h = im.size
+    nw = max(1, int(round(w * sx)))
+    nh = max(1, int(round(h * sy)))
+    resized = im.resize((nw, nh), Image.BICUBIC)
+    canvas = Image.new("RGBA", (w, h), (0, 0, 0, 0))
+    canvas.paste(resized, ((w - nw) // 2, h - nh))
+    return canvas
+
+
+def bake_squash_return(state_entry, states_dir, idle_img,
+                       total_frames: int = 30, name: str | None = None) -> dict:
+    """压扁回弹转场：在最大压扁瞬间完成 A(表演末姿态)→B(idle) 姿态切换。
+
+    三幕（total_frames 默认 30 @33ms ≈ 1 秒仪式）：
+    1. 前 40% 帧数把 A 从 1.0 平滑压到 (sy 0.78, sx 1.18)，锚点=底部中心；
+    2. 恰在最大压扁帧无缝换装到 B 的同比例压扁帧——两图都压到 78% 时
+       轮廓差异最小，切换无感、零叠影；
+    3. 后 60% 帧数 ease_out_back 式从 0.78 经 1.12 过冲回弹落定为 B 原图。
+    幂等：先清该状态旧转场帧（_T 与 _Q 两代都清）再生成 _Q 序列；
+    frame_ms 沿用条目原值（dance 的 41ms 档传 total_frames=24 同样约 1 秒）。
+    返回 manifest 补丁片段（frames=表演帧+新转场帧的完整列表）。
+    """
+    states_dir = Path(states_dir)
+    # 状态名：显式传入优先；否则从 file 去掉姿态标签后缀派生（shock_D000→shock）
+    stem = name or Path(str(state_entry.get("file") or "state")).stem \
+        .rsplit("_", 1)[0]
+    legacy_prefixes = tuple(f"{stem}_{t}" for t in LEGACY_TRANSITION_TAGS)
+    base_rels = [str(r).replace("\\", "/")
+                 for r in state_entry.get("frames") or ()
+                 if not Path(str(r)).name.startswith(legacy_prefixes)]
+    if not base_rels:
+        raise ValueError("清掉旧转场帧引用后没有实质表演帧，无法烘焙转场")
+    a = Image.open(states_dir / Path(base_rels[-1]).name).convert("RGBA")
+    idle = idle_img if isinstance(idle_img, Image.Image) else Image.open(idle_img)
+    idle = idle.convert("RGBA")
+    b = idle.resize(a.size, Image.BICUBIC) if idle.size != a.size \
+        else idle.copy()
+    n = max(SQUASH_MIN_FRAMES, int(total_frames))
+    n1 = max(2, int(round(n * SQUASH_ACT1_SHARE)))
+    n2 = n - n1
+    # 归一化过冲峰值：(1.12-0.78)/(1.0-0.78) ≈ 1.545，sy 峰值恰为 1.12
+    norm_sx = (SQUASH_OVERSHOOT - SQUASH_SY_MIN) / (1.0 - SQUASH_SY_MIN)
+    s_sx = _ease_out_back_peak(norm_sx)
+    # 竖向余量自适应：B 顶上有余量才放行完整 1.12 过冲；满画布紧裁剪的
+    # 素材把竖向过冲封顶到 1.0（绝不裁头），富余的回弹能量转由横向
+    # 细拉（sx 依旧按完整峰值回弹）表达——橡胶手感不丢、形状永不越界
+    b_box = b.getchannel("A").getbbox() or (0, 0, *b.size)
+    headroom = max(0.0, b_box[1] / max(1, b.size[1]))
+    peak_sy = min(SQUASH_OVERSHOOT, 1.0 + headroom)
+    s_sy = _ease_out_back_peak((peak_sy - SQUASH_SY_MIN)
+                               / (1.0 - SQUASH_SY_MIN))
+    seq = []
+    for i in range(n1):            # 第一幕：A 蓄力平滑压扁（ease-in-quad，
+        u = i / (n1 - 1)           # 末帧精确压满 0.78，让换装两侧零比例错位）
+        seq.append(_squash_pose(
+            a, 1.0 + (SQUASH_SX_MAX - 1.0) * u * u,
+            1.0 + (SQUASH_SY_MIN - 1.0) * u * u))
+    seq.append(_squash_pose(b, SQUASH_SX_MAX, SQUASH_SY_MIN))  # 换装点
+    for j in range(1, n2):         # 第二幕：B 过冲回弹落定（ease_out_back）
+        u = j / (n2 - 1)
+        seq.append(_squash_pose(
+            b, SQUASH_SX_MAX + (1.0 - SQUASH_SX_MAX) * _back_ease(u, s_sx),
+            SQUASH_SY_MIN + (1.0 - SQUASH_SY_MIN) * _back_ease(u, s_sy)))
+    # 幂等清场：_T（渐变转场）与 _Q（上一轮压扁转场）两种历史命名都清
+    for tag in LEGACY_TRANSITION_TAGS:
+        for old in sorted(states_dir.glob(f"{stem}_{tag}[0-9][0-9][0-9].png")):
+            old.unlink()
+    rels = list(base_rels)
+    for i, fr in enumerate(seq):
+        name = f"{stem}_{TRANSITION_TAG_V2}{i:03d}.png"
+        fr.save(states_dir / name)
+        rels.append(f"states/{name}")
+    try:
+        ms = int(state_entry.get("frame_ms") or V2_FRAME_MS)
+    except (TypeError, ValueError):
+        ms = V2_FRAME_MS
+    return {"frames": rels, "frame_ms": ms, "play": "once",
+            "return_to": "idle", "transition": "squash_return"}
+
+
+def bake_all_squash_returns(states_dir: Path = OUT,
+                            manifest_path: Path = MANIFEST,
+                            targets=SQUASH_TARGETS) -> dict:
+    """批量压扁回弹转场并写回 manifest（幂等，替换旧 _T 渐变转场主路径）。
+
+    只处理活动区 play=once 且带帧序列的目标状态；转场帧数随条目节拍折算
+    （33ms→30 帧、41ms→24 帧，仪式时长都约 1 秒）。单状态素材缺失只警告
+    跳过。返回 {"状态名": 完整 frames 列表}。
+    """
+    states_dir = Path(states_dir)
+    data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    states = data.get("states") or {}
+    patch = {}
+    for name in targets:
+        entry = states.get(name)
+        rels = (entry or {}).get("frames")
+        if not isinstance(rels, (list, tuple)) or not rels:
+            print(f"[压扁转场] {name}: 跳过（条目缺失/已禁用/没有帧序列）")
+            continue
+        if str(entry.get("play") or "loop").strip().lower() != "once":
+            print(f"[压扁转场] {name}: 跳过（非 once 常驻态无收招仪式）")
+            continue
+        try:
+            ms = int(entry.get("frame_ms") or V2_FRAME_MS)
+        except (TypeError, ValueError):
+            ms = V2_FRAME_MS
+        total = max(SQUASH_MIN_FRAMES, int(round(1000.0 / max(1, ms))))
+        try:
+            patch[name] = bake_squash_return(entry, states_dir,
+                                             states_dir / "idle.png",
+                                             total_frames=total, name=name)
+        except Exception as exc:
+            print(f"[压扁转场] {name}: 跳过（{exc}）")
+            continue
+        base_n = len(rels) - sum(
+            1 for r in rels if Path(str(r)).name.startswith(
+                (f"{name}_T", f"{name}_Q")))
+        print(f"[压扁转场] {name}: 表演 {base_n} 帧 + 追加 "
+              f"{len(patch[name]['frames']) - base_n} 张 _Q 帧 @ {ms}ms")
+    if patch:
+        merge_manifest_entries(patch, manifest_path)
+    return {name: p["frames"] for name, p in patch.items()}
+
+
+# ---------------------------------------------------------------- 打气派对管线（cheer 常驻搞笑循环）
+CHEER_PARTY_FRAMES = 45        # 45 帧 @33ms ≈ 1.5 秒循环
+CHEER_WAVE_FRAMES = 18         # 第一幕：两快(3+3)两慢(6+6)挥旗
+CHEER_TILT_DEG = 18.0          # 挥旗幅度（主人验收加码 ±14°→±18°）
+CHEER_SQUASH_SY = 0.75         # 蓄力猛压
+CHEER_OVERSHOOT_SY = 1.15      # 弹起过冲（蓄力搞笑）
+CHEER_SPIN_FRAMES = 12         # 原地粗转一圈（卡顿感反而喜感）
+CHEER_APEX_FRAMES = 3          # 顶点定格帧数（星星向外爆开）
+CHEER_HOP_PX = 10              # 挥旗/顶点伴随的底部小跳幅度
+# 星星配色复用 cutout_anim 的五角星风格（就地实现，不 import）
+CHEER_STAR_FILL = (255, 216, 77, 235)
+CHEER_STAR_LINE = (214, 158, 0, 255)
+
+
+def _cheer_poses(fps_ms: int = 33) -> list:
+    """45 帧连招的纯姿态表（无 IO，测试直测）：五幕整活连招。
+
+    每帧 pose: angle 倾角 / sx, sy 缩放 / dy 垂直位移（负=跳起）/
+    arc 挥臂弧线残影方向（R/L/None）/ arc_alpha 残影透明度（100~180）/
+    stars 星星爆开进度（None 或 1..3）。
+    """
+    poses = []
+    # 第一幕：两快两慢挥旗（±18°，卡点喜感），伴随底部小跳 + 挥臂弧线残影
+    for side, count in (("R", 3), ("L", 3), ("R", 6), ("L", 6)):
+        for i in range(count):
+            poses.append({
+                "angle": CHEER_TILT_DEG if side == "R" else -CHEER_TILT_DEG,
+                "sx": 1.0, "sy": 1.0,
+                "dy": -CHEER_HOP_PX if i % 2 == 1 else 0,
+                "arc": side,
+                "arc_alpha": 180 - round(80 * i / max(1, count - 1)),
+                "stars": None,
+            })
+    # 第二幕：蓄力猛压 0.75 → 弹过冲 1.15 → 回弹落定（sx 镜像保体积）
+    for sy in (0.92, 0.82, CHEER_SQUASH_SY,
+               CHEER_OVERSHOOT_SY, 1.06, 1.0):
+        poses.append({"angle": 0.0, "sx": round(1.0 + (1.0 - sy) * 0.9, 4),
+                      "sy": sy, "dy": 0, "arc": None, "arc_alpha": 0,
+                      "stars": None})
+    # 第三幕：原地自转一圈（30°/帧 粗转，卡顿感反而喜感）
+    for k in range(1, CHEER_SPIN_FRAMES + 1):
+        poses.append({"angle": 30.0 * k, "sx": 1.0, "sy": 1.0, "dy": 0,
+                      "arc": None, "arc_alpha": 0, "stars": None})
+    # 第四幕：顶点定格 3 帧 + 三颗五角星向外爆开
+    for k in range(1, CHEER_APEX_FRAMES + 1):
+        poses.append({"angle": 0.0,
+                      "sx": round(1.0 + (1.0 - CHEER_OVERSHOOT_SY) * 0.9, 4),
+                      "sy": CHEER_OVERSHOOT_SY, "dy": -CHEER_HOP_PX,
+                      "arc": None, "arc_alpha": 0, "stars": k})
+    # 第五幕：落地回弹收招，落定中性姿态后循环回第一帧
+    for sy in (1.08, 1.0, 0.94, 1.02, 1.0, 1.0):
+        poses.append({"angle": 0.0, "sx": round(1.0 + (1.0 - sy) * 0.9, 4),
+                      "sy": sy, "dy": 0, "arc": None, "arc_alpha": 0,
+                      "stars": None})
+    assert len(poses) == CHEER_PARTY_FRAMES
+    return poses
+
+
+def _cheer_star_geom(stage: int, base_w: int) -> tuple:
+    """星星爆开进度（1..3）-> (离心距离, 星星半径)，随进度向外长大。"""
+    return int((0.08 + 0.05 * stage) * base_w), 8 + 5 * stage
+
+
+def _star_points(cx: float, cy: float, r: float,
+                 rot: float = -math.pi / 2) -> list:
+    """五角星十顶点（与 cutout_anim 同风格，就地实现简版）。"""
+    pts = []
+    for i in range(10):
+        ang = rot + i * math.pi / 5
+        rr = r if i % 2 == 0 else r * 0.42
+        pts.append((cx + rr * math.cos(ang), cy + rr * math.sin(ang)))
+    return pts
+
+
+def _draw_star_burst(frame: Image.Image, cx: float, top_y: float,
+                     stage: int, base_w: int) -> None:
+    """三颗五角星在头顶扇形（左上/正上/右上）向外爆开。"""
+    overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    dist, r = _cheer_star_geom(stage, base_w)
+    for deg in (152, 90, 28):
+        a = math.radians(deg)
+        d.polygon(_star_points(cx + dist * math.cos(a),
+                               top_y - dist * math.sin(a), r),
+                  fill=CHEER_STAR_FILL, outline=CHEER_STAR_LINE)
+    frame.alpha_composite(overlay)
+
+
+def _draw_swing_arc(frame: Image.Image, cx: float, top_y: float,
+                    sprite_h: float, side: str, alpha: int) -> None:
+    """旗区挥臂弧线残影：弧角跟随倾摆方向，双层弧制造挥出轨迹（100~180 透明度）。
+
+    圆心取头顶、半径半身——弧线扫在身体上方的透明区；再用「帧透明区反转」
+    做遮罩，残影只落在体外，不糊脸不掉色。
+    """
+    overlay = Image.new("RGBA", frame.size, (0, 0, 0, 0))
+    d = ImageDraw.Draw(overlay)
+    # PIL 角度口径：0°=3 点钟方向、顺时针（y 向下）；-90°=正上方
+    center = -70 if side == "R" else -110
+    cy = top_y + int(sprite_h * 0.06)
+    spread = 28
+    for radius_k, width, ang_off, alpha_off in ((0.55, 9, 0, 0),
+                                                (0.47, 6, -10 if side == "R"
+                                                 else 10, 60)):
+        r = int(sprite_h * radius_k)
+        box = [cx - r, cy - r, cx + r, cy + r]
+        d.arc(box, center - spread + ang_off, center + spread + ang_off,
+              fill=(255, 255, 255, max(100, int(alpha) - alpha_off)),
+              width=width)
+    # 遮掉身体不透明区：残影 alpha 与「帧透明区的反转」相乘，弧线只在体外显形
+    outside = frame.getchannel("A").point(lambda v: 255 - v)
+    overlay.putalpha(ImageChops.multiply(overlay.getchannel("A"), outside))
+    frame.alpha_composite(overlay)
+
+
+def _cheer_canvas(base_size, poses) -> tuple:
+    """按连招最大形变反推统一画布：(宽, 高, 地板 y)。所有帧同画布防抖动。"""
+    w, h = base_size
+    max_w = max_h = 0.0
+    max_hop = 0
+    star_head = 0
+    for p in poses:
+        a = math.radians(abs(p["angle"]))
+        rw = (w * math.cos(a) + h * math.sin(a)) * p["sx"]
+        rh = (w * math.sin(a) + h * math.cos(a)) * p["sy"]
+        max_w, max_h = max(max_w, rw), max(max_h, rh)
+        max_hop = max(max_hop, -p["dy"])
+        if p["stars"]:
+            dist, r = _cheer_star_geom(p["stars"], w)
+            star_head = max(star_head, dist + r + 10)
+    margin = 6
+    cw = int(math.ceil(max_w)) + margin * 2
+    ch = int(math.ceil(max_h)) + max_hop + star_head + margin
+    return cw, ch, ch - margin
+
+
+def _render_cheer_frame(base: Image.Image, pose: dict, canvas: tuple) -> Image.Image:
+    """按姿态表渲染一帧：缩放->旋转->底部中心上画布->弧线残影->星星爆开。"""
+    cw, ch, floor_y = canvas
+    frame = Image.new("RGBA", (cw, ch), (0, 0, 0, 0))
+    w, h = base.size
+    sprite = base
+    if abs(pose["sx"] - 1.0) > 1e-9 or abs(pose["sy"] - 1.0) > 1e-9:
+        sprite = base.resize((max(1, round(w * pose["sx"])),
+                              max(1, round(h * pose["sy"]))), Image.BICUBIC)
+    if abs(pose["angle"]) > 1e-9:
+        sprite = sprite.rotate(pose["angle"], expand=True,
+                               resample=Image.BICUBIC)
+    sw, sh = sprite.size
+    px = (cw - sw) // 2
+    py = floor_y - sh + int(pose["dy"])
+    frame.paste(sprite, (px, py), sprite)
+    if pose["arc"]:
+        _draw_swing_arc(frame, px + sw // 2, py, sh,
+                        pose["arc"], pose["arc_alpha"])
+    if pose["stars"]:
+        _draw_star_burst(frame, px + sw // 2, py - 6, pose["stars"], w)
+    return frame
+
+
+def bake_cheer_party(base: Image.Image, fps_ms: int = 33,
+                     out_dir: Path = OUT) -> dict:
+    """把 cheer 底图整活成 45 帧常驻搞笑循环，返回 manifest 补丁片段。
+
+    连招：两快两慢 ±18° 挥旗（小跳+挥臂弧线残影）→ 蓄力猛压 0.75 弹
+    过冲 1.15 → 原地 12 帧粗转一圈 → 顶点定格 3 帧+三颗五角星爆开 →
+    落地回弹收招，循环回第 1 帧。输出 cheer_D{idx:03d}.png（先清旧帧，
+    幂等重烤字节一致）；条目改 frames+frame_ms=33+play=loop+pingpong=False。
+    """
+    base = base.convert("RGBA")
+    poses = _cheer_poses(fps_ms)
+    try:
+        ms = max(10, int(fps_ms))
+    except (TypeError, ValueError):
+        ms = 33
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for old in sorted(out_dir.glob(
+            f"cheer_{SMOOTH_TAG_V2}[0-9][0-9][0-9].png")):
+        old.unlink()
+    canvas = _cheer_canvas(base.size, poses)
+    rels = []
+    for i, pose in enumerate(poses):
+        name = f"cheer_{SMOOTH_TAG_V2}{i:03d}.png"
+        _render_cheer_frame(base, pose, canvas).save(out_dir / name)
+        rels.append(f"states/{name}")
+    print(f"[打气派对] cheer: {len(rels)} 帧 @ {ms}ms 常驻循环 "
+          f"画布 {canvas[0]}x{canvas[1]}")
+    return {"frames": rels, "frame_ms": ms, "play": "loop",
+            "pingpong": False}
+
+
+def rebuild_all_animation_assets(manifest_path: Path = MANIFEST,
+                                 states_dir: Path = OUT,
+                                 idle_img=None) -> dict:
+    """一键重烤全部程序合成动画资产并写回 manifest（幂等，可反复执行）。
+
+    按序执行：压扁回弹转场（shock/cry/dance，替换旧 _T/_Q 两代转场）→
+    cheer 打气派对 45 帧循环 → sleep 播放提速（frame_ms→90，帧图不动）。
+    全部产物从源帧确定性重建；主代理合并后即可在主仓一键重烤。
+    """
+    manifest_path = Path(manifest_path)
+    states_dir = Path(states_dir)
+    idle_img = idle_img or (states_dir / "idle.png")
+    squash = bake_all_squash_returns(states_dir, manifest_path)
+    patch = {}
+    cheer_src = states_dir / "cheer.png"
+    if cheer_src.exists():
+        patch["cheer"] = bake_cheer_party(Image.open(cheer_src),
+                                          out_dir=states_dir)
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    sleep_entry = (data.get("states") or {}).get("sleep")
+    if isinstance(sleep_entry, dict) and sleep_entry.get("frames"):
+        patch["sleep"] = {"frame_ms": SLEEP_SPEED_MS}
+    if patch:
+        merge_manifest_entries(patch, manifest_path)
+    return {
+        "squash": {k: len(v) for k, v in squash.items()},
+        "cheer_frames": len(patch.get("cheer", {}).get("frames") or ()),
+        "sleep_frame_ms": patch.get("sleep", {}).get("frame_ms"),
+    }
+
+
 # ---------------------------------------------------------------- 全帧动作管线
 VIDEO_SUFFIXES = (".mp4", ".mov", ".avi")   # 同名源视频优先于 GIF 抽稀
 MAX_ACTION_FRAMES = 240                     # 全帧动作的单段上限（内存友好）
@@ -734,7 +1138,8 @@ def merge_full_frame_patch(md: dict, state: str) -> dict:
     }
 
 
-if __name__ == "__main__":
+def _run_legacy_raw_pipeline():
+    """旧默认管线：assets/raw 全量抠图/切片并合并 manifest（--rebuild 之外的路径）。"""
     png_files = sorted(RAW.glob("*.png"))
     gif_files = sorted(RAW.glob("*.gif"))
     video_stems = {p.stem for suf in VIDEO_SUFFIXES for p in RAW.glob(suf)}
@@ -761,3 +1166,12 @@ if __name__ == "__main__":
         merge_manifest_entries(patch)
         print("manifest 已并入多帧条目:", ", ".join(sorted(patch)))
     print("完成。成品已输出到", OUT)
+
+
+if __name__ == "__main__":
+    # 一键重烤入口：python prep_assets.py --rebuild
+    # （压扁回弹转场 + cheer 派对 + sleep 提速，从源帧确定性重建，幂等）
+    if "--rebuild" in sys.argv[1:]:
+        print("一键重烤动画资产:", rebuild_all_animation_assets())
+    else:
+        _run_legacy_raw_pipeline()

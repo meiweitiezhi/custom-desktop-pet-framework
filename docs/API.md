@@ -274,14 +274,20 @@ dance 等全帧档跳过）。`bake_all_smooth_v2()` 则在循环时长不变（
 前提下把多帧状态加密到 30fps 载波（frame_ms=33）：从 source_frames 指向的
 原始 `_f` 姿态源重烘（绝不拿插帧帧再插帧），输出 `<状态>_D{idx:03d}.png`
 并写回 source_frames/source_loop_ms 源头标记，重跑幂等字节一致。
-`extend_return_transition()` 转场补帧管线（任务三）给 once 状态追加
-「收招回 idle」渐变帧：取序列末帧与 idle.png 生成 12 张（含首尾端点）
-`<状态>_T{idx:03d}.png` 追加到 frames 尾部，frame_ms 不变（33ms 载波下
-约 0.4 秒），末帧本就是 idle 姿态时直接复用 idle 图；重复执行先清旧 _T 帧
-再生成（幂等）。手动执行：
+`extend_return_transition()` 旧渐变转场（12 张 `_T` 帧）已被压扁回弹方案
+接替、函数保留供回滚；现行主路径 `bake_squash_return()` 在最大压扁瞬间
+完成姿态切换（皮筋手法，形状连续无叠影）：表演末帧与 idle 平滑压到
+(sy 0.78, sx 1.18)（锚点=底部中心），恰在最大压扁帧换装到 idle 的同比例
+压扁帧，再 ease_out_back 式经 1.12 过冲回弹落定，输出 `<状态>_Q{idx:03d}.png`
+追加到 frames 尾部（帧数随节拍折算：33ms→30 帧、41ms→24 帧，仪式约 1 秒），
+幂等重跑先清 `_T`/`_Q` 两代旧帧。cheer 单图经 `bake_cheer_party()` 整活成
+45 帧常驻搞笑循环（两快两慢 ±18° 挥旗+挥臂弧线残影+小跳 → 蓄力猛压 0.75
+弹过冲 1.15 → 12 帧粗转一圈 → 顶点定格 3 帧+三颗五角星爆开 → 落地收招，
+输出 `cheer_D{idx:03d}.png`，play=loop）。一键重烤入口（压扁转场 + cheer
+派对 + sleep 播放提速 90ms，全部从源帧确定性重建、幂等）：
 
 ```bash
-python -c "import prep_assets as p; p.extend_return_transition(p.OUT, p.MANIFEST, ('shock','cry','dance'))"
+python prep_assets.py --rebuild
 ```
 
 ## 8. 动作菜单（本体右键 = 托盘，共用一份清单）

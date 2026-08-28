@@ -13,7 +13,7 @@ from .paths import CONFIG_PATH  # frozen 态指向 exe 同目录，开发态指�
 TEMPLATE = """\
 [pet]
 name = 团子
-display_size = 128
+display_size = 96
 # 渲染节拍（毫秒/帧）：缺省 33 = 30fps 载波（配合 30fps 密度烘焙最丝滑）；省电可改 66
 tick_ms = 33
 

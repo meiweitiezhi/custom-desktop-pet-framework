@@ -126,9 +126,18 @@ class TestManifestV3Fields(unittest.TestCase):
 
     def test_multi_frame_states_play_once_and_return_to_idle(self):
         multi = {k: v for k, v in self._states().items() if v.get("frames")}
-        # 五态精简后活动区带帧序列的恰为这四个（含 shock/cry/dance 的 _T 转场帧）
-        self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry"})
+        # 活动区带帧序列的恰为这五个（含 shock/cry/dance 的 _Q 压扁转场帧
+        # 与 transition-v2 起改为 45 帧常驻循环档的 cheer）
+        self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry",
+                                      "cheer"})
         for name, spec in multi.items():
+            if name == "cheer":
+                # cheer 是唯一例外：打气派对循环档（常驻搞笑，不谢幕）
+                self.assertEqual(spec.get("play"), "loop",
+                                 "cheer 必须是 loop 常驻循环")
+                self.assertFalse(spec.get("pingpong"),
+                                 "cheer 正向循环，不走乒乓")
+                continue
             self.assertEqual(spec.get("play"), "once",
                              f"{name} 缺 play=once")
             self.assertEqual(spec.get("return_to", "idle"), "idle",
