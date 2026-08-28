@@ -39,9 +39,7 @@
         "states/eat_S017.png",
         "states/eat_S018.png",
         "states/eat_S019.png",
-        "states/eat_S020.png",
-        "states/eat_S021.png",
-        "states/eat_S022.png"
+        "states/eat_S020.png"
       ],
       "frame_ms": 140,
       "play": "once",
@@ -74,9 +72,7 @@
         "states/sleep_S017.png",
         "states/sleep_S018.png",
         "states/sleep_S019.png",
-        "states/sleep_S020.png",
-        "states/sleep_S021.png",
-        "states/sleep_S022.png"
+        "states/sleep_S020.png"
       ],
       "frame_ms": 140,
       "play": "once",
@@ -104,9 +100,7 @@
         "states/laugh_S012.png",
         "states/laugh_S013.png",
         "states/laugh_S014.png",
-        "states/laugh_S015.png",
-        "states/laugh_S016.png",
-        "states/laugh_S017.png"
+        "states/laugh_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
@@ -134,9 +128,7 @@
         "states/shock_S012.png",
         "states/shock_S013.png",
         "states/shock_S014.png",
-        "states/shock_S015.png",
-        "states/shock_S016.png",
-        "states/shock_S017.png"
+        "states/shock_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
@@ -242,9 +234,7 @@
         "states/cry_S012.png",
         "states/cry_S013.png",
         "states/cry_S014.png",
-        "states/cry_S015.png",
-        "states/cry_S016.png",
-        "states/cry_S017.png"
+        "states/cry_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
@@ -272,9 +262,7 @@
         "states/hide_S012.png",
         "states/hide_S013.png",
         "states/hide_S014.png",
-        "states/hide_S015.png",
-        "states/hide_S016.png",
-        "states/hide_S017.png"
+        "states/hide_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
@@ -302,9 +290,7 @@
         "states/love_S012.png",
         "states/love_S013.png",
         "states/love_S014.png",
-        "states/love_S015.png",
-        "states/love_S016.png",
-        "states/love_S017.png"
+        "states/love_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
@@ -332,9 +318,7 @@
         "states/alien_S012.png",
         "states/alien_S013.png",
         "states/alien_S014.png",
-        "states/alien_S015.png",
-        "states/alien_S016.png",
-        "states/alien_S017.png"
+        "states/alien_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
@@ -362,9 +346,7 @@
         "states/blushmax_S012.png",
         "states/blushmax_S013.png",
         "states/blushmax_S014.png",
-        "states/blushmax_S015.png",
-        "states/blushmax_S016.png",
-        "states/blushmax_S017.png"
+        "states/blushmax_S015.png"
       ],
       "frame_ms": 60,
       "play": "once",
