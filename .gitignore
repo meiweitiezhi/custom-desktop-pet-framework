@@ -1,0 +1,41 @@
+# ===== 红线：以下内容永远不进仓库 =====
+# 本地配置（含 api_base / api_key / model / bridge token）
+config.ini
+runtime.json
+
+# 原始素材本地保存，不入库
+assets/raw/
+
+# 本地说明文档（厂商地址、接入教程等只在本地）
+*.local.md
+docs_local/
+
+# Python 杂物
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+
+# 环境与密钥类文件一概拒绝
+.env
+.env.*
+*.key
+*.pem
+
+# ===== 版权红线：角色表情包图片一律不入库（本地玩，分发走 exe 打包）=====
+assets/states/
+assets/raw/
+
+# ===== 音频素材红线：本地私有素材，永不入库（含结算画面 BGM 等）=====
+# 该目录内容仅供 owner 本地使用与私下分享，绝不提交、也绝不进 exe datas。
+assets/local/
+
+# PyInstaller 构建产物一律不入库（入库的只有 tools/petfw.spec 这份配置）
+build/
+dist/
+
+# ===== 本地私有工具与个人配置（只在本地跑，绝不提交）=====
+tools/local/
+
+# 微信表情挑选临时预览区（挑剩就删，图片素材永不入库）
+assets/raw_stickers_preview/

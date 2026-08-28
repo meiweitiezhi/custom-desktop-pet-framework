@@ -1,0 +1,8 @@
+# 运行依赖
+PySide6>=6.5
+
+# 仅素材预处理 prep_assets.py 需要
+pillow>=10.0
+
+# 仅重新打包 exe（tools/build_exe.bat）需要，按需安装
+# pyinstaller>=6.0

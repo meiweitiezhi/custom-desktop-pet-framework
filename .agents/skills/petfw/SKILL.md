@@ -1,0 +1,143 @@
+---
+name: petfw-dev
+description: 开发「团子」本地桌宠项目的专属技能。涉及 petfw 仓库的构建、测试、加表情状态、写扩展、hook 联动或提交推送时使用；内含本项目的硬性门禁与红线。
+---
+
+# 团子开发技能
+
+## 项目一句话
+
+PySide6 桌宠：渲染内核只认命令（SetState/Say/Hop），业务全在可插拔 Driver 与
+本地扩展里；大模型仅负责对话，其余功能离线可用。
+
+## 必跑命令
+
+```bash
+python -m unittest discover -s tests -t .   # 全部测试（无 GUI、无网络）
+QT_QPA_PLATFORM=offscreen python run.py --smoke   # 冒烟启动验证
+python tools/check.py                       # 发布门禁（测试+版权图+厂商字样扫描）
+python prep_assets.py                       # 抠图管线：PNG 静图 + GIF 抽帧拆片
+```
+
+## 硬性红线（提交前逐条自检）
+
+1. 角色表情包图片**永不入库**：不得跟踪 assets/raw/、assets/states/ 下任何图片。
+2. config.ini、runtime.json 永不入库（含 key/model/token）。
+3. 仓库内禁止出现真实 API 地址、密钥、模型名等厂商字样（check.py 会拦）。
+4. bridge token 每次启动轮换——外部接入示例一律演示
+   `python -m petfw.react <event>`，别写死 token。
+5. 提交遵循 TDD：先补测试再实现；commit 前必过 `tools/check.py`。
+
+## 架构速记
+
+```
+事件(dict) -> dispatch -> Driver.react -> [SetState|Say|Hop] -> apply 渲染
+Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 api)
+扩展一律走 bus 事件(growth/weather)，不在 host 里做业务判断
+```
+
+音效零素材：`petfw/sound_core.py` 运行期用标准库合成七种短音效（WAV 落系统临时目录），
+宿主 `PetWindow.play()` 经 QSoundEffect 播放并全程静默降级，改声音手感只动 sound_core。
+
+## 常见改动配方
+
+### 加一个新表情状态
+
+1. 放原图 `assets/raw/<名>.png`（或 `<名>.gif`，本地）→ 跑 `prep_assets.py`
+2. `assets/manifest.json` 登记：单图用 file/bob_amp/period_ms/tilt_deg；
+   GIF 会被自动抽稀成多帧条目（frames + frame_ms）合并进 manifest
+3. `petfw/bus.py::STATES` 加名字（否则 SetState 抛错）
+4. `petfw/drivers/rule.py` 加台词；`host.py::STATE_ZH` 加中文标签
+5. 补一条 rule 驱动相关测试
+6. （可选）要动效版：跑 `python tools/local/gifgen.py --state <名> --preview`
+   用 `petfw/cutout_anim.py::RECIPES` 程序合成剪纸样片到
+   assets/raw/drafts，肉眼验收后再 `--install` 覆盖母带并重跑 prep_assets
+
+**缺图降级规则（核心四态 vs 可选新态）**：
+- 核心四态 = idle/cheer/eat/sleep（`bus.CORE_STATES`）：任何一张缺图或损坏，
+  `load_states` 直接 `SystemExit` 报错退出——没有它们就撑不起角色形象；
+- 可选新态（如 laugh/shock/angry/dance）：manifest 登记了但没图时，启动打印
+  警告并跳过该状态；托盘菜单不出现该项，事件点到也只是维持当前表情不崩窗；
+  用户补图重跑 `prep_assets.py` 即解锁，无需改代码；
+- 两边不许漂移：`assets/manifest.json` 登记的名字不许超出 `bus.STATES`，
+  且核心四态必须已登记（`tests/test_core.py::TestManifest` 强制）；可选新态
+  允许先注册进 `bus.STATES`、图片后补到位再跑 prep_assets.py 解锁。
+
+### 逐帧动画与动作点播（animator_core + ActionPlayer）
+
+- **纯逻辑核心在 `petfw/animator_core.py`**：sample_frames 均匀抽稀 ≤6 帧、
+  schedule/next_index 双档节拍、validate_rate 变速校验——全部无 Qt 可直测。
+- **点播核心在 `petfw/action_player.py::ActionPlayer`**：`start(spec,
+  on_finish_state)` 装填、`tick(dt)->帧下标|None` 推进；once 播完一轮
+  （时长 = len(frames)×frame_ms/1000）谢幕，loop 永续；清账式累积，
+  大小 dt 都不漂移。表现层只消费它的结论。
+- **manifest 三代 schema 并存**：v1 `"file"` 单图照旧；v2 `"frames"`+
+  `"frame_ms"` 多帧（GIF 抽稀 `_f{i}`）；v3 动作字段 `play`(once/loop,
+  缺省 loop 向后兼容)+`return_to`(缺省 idle)。全帧视频档输出
+  `<状态>_F{index:03d}.png`（prep_assets 同名视频优先于 GIF）。
+- **安静待机不轮播**：多帧表情平时静立首帧只呼吸浮动（idle bob_amp=2），
+  换帧只在 `PetWindow.play_action(name)` 点播时发生——治"定格闪跳"。
+- **SetState 让路**：表演中的切表情请求经 `host.defer_if_playing` 进候补位
+  （最后请求赢），谢幕后再应用。
+- **菜单单一来源**：本体右键(contextMenuEvent)与托盘共用
+  `PetWindow.build_actions_menu(menu, window)`：情绪/整活/系统三段分组，
+  词条只列已加载出图的状态，缺图自动隐藏。改菜单只改这一处。
+- **结算画面联动保留但走新引擎**：结算 opened 改调
+  `play_action("dance", play="loop")` 循环扭舞到关窗，closed 直接叫停
+  播放器并恢复打开前的表情。
+- **母带重烧**（本地工具不入库）：mp4 母带放 `assets/local/gen_videos/`
+  跑 `python tools/local/rebuild_frames_from_videos.py` 全帧切片并自动合并
+  manifest（frame_ms=int(1000/fps_est) 上限 60、play=once）。
+
+### 结算画面配方（全屏走马灯战报）
+
+1. **core 纯函数与表现层严格分离**：文案行由 `petfw/settlement_core.py::
+   build_settlement_lines()` 生成（无 Qt、可注入垃圾值不炸）；Qt 侧
+   `settlement_window.py` 只消费字符串，禁止在 GUI 类里做业务计算。
+2. **每日定时 = stdlib datetime + 单发 QTimer 自续**：`next_delay_ms()`
+   算「现在距最近一个 daily_time 的毫秒差」（已过点排明天），单发 QTimer
+   触发后在 timeout 里再算下一次，天然跨天续期；不用 interval 周期定时器。
+3. **BGM 静默降级原则**：音频放 `.gitignore` 的 `assets/local/`
+   （永不入库、也绝不进 exe datas 列表）；`find_bgm()` 只做存在性探测
+   （bgm.mp3 优先、bgm.m4a 兜底）；QMediaPlayer/QAudioOutput 连 import
+   一起包 try——缺文件、缺多媒体后端一律无声继续，画面永不陪葬。
+   变速倍率 `[settlement] bgm_rate`（默认 2.5，限 0.5~4.0）经
+   `validate_rate` 洗过后 setPlaybackRate，单独包 try 不支持就原速播；
+   `bgm = false` 可整个关掉 BGM。
+4. 表现层失败时宿主要能退回旧气泡战报（见 `host.py::_open_settlement`
+   返回 False 的兜底分支）。
+
+### 打包成 exe（私发版）
+
+```bash
+python prep_assets.py        # 先有 assets/states/*.png 成品图
+pip install pyinstaller      # 仅打包机需要
+tools/build_exe.bat          # == python -m PyInstaller tools/petfw.spec
+QT_QPA_PLATFORM=offscreen dist/CustomPetFramework.exe --smoke   # 冒烟验证
+```
+
+spec 要点（tools/petfw.spec）：
+
+- **paths 解析**：运行期路径统一走 `petfw/paths.py`——frozen(onefile) 下
+  只读素材从 `sys._MEIPASS/assets` 读，可写的 config.ini/runtime.json 落在
+  exe 同目录（`Path(sys.executable).parent`）；开发态全是仓库根。
+- **add-data**：只打包 `assets/manifest.json` 与 `assets/states/*.png`，
+  绝不带 `assets/raw/` 原图（版权红线）；入口是薄壳 `tools/petfw_launcher.py`。
+- **产物不入库**：build/ 与 dist/ 已 .gitignore，入库的只有 spec 配置本身；
+  分发对象须遵守 LICENSE（非商用、保留署名）。
+
+### 加一个新事件源/玩法
+
+1. 在 bus.py 定事件字段 + describe_event 文案
+2. 规则脑处理该 type（必须无条件不炸）；LLM 脑免费获得（靠 describe_event）
+3. `petfw/extensions/<名>.py` 写纯逻辑核心 + tests 注入 runner 测试
+4. 宿主只在托盘/定时器处触发事件，不做业务判断
+
+### 外部程序给宠物发事件
+
+读 `petfw/react.py`（约 40 行）照抄即可；协议详见 docs/API.md 第 5 节。
+
+## 提交节奏约定
+
+里程碑制：每个功能「测试绿 + check.py 全过」即 commit 并 push 到 origin/main；
+commit message 用中文描述行为变化而非罗列文件。
