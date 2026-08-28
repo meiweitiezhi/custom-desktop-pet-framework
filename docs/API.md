@@ -222,6 +222,7 @@ cmd /c "cd /d %PETFW_HOME% && python -m petfw.react edit"
 | frames | 多帧模式的帧序列，相对 assets/ 的 PNG 路径列表 |
 | frame_ms | 帧时长的基准毫秒数（取自 GIF duration 中位数或 int(1000/fps_est)，上限 60ms） |
 | play | `once` 完整播放一轮就谢幕 / `loop` 循环；缺省 `loop`（老条目零改动兼容） |
+| pingpong | `true` 时 loop 档乒乓往返走帧（到尾反向、回头正向），once 档忽略照旧播到尾；缺省不开 |
 | return_to | 谢幕后的建议去向，缺省 `idle`（宿主实际优先回到表演前来路） |
 | bob_amp | 上下浮动幅度 px |
 | period_ms | 浮动周期，越小越欢快 |
@@ -251,6 +252,10 @@ manifest 与词表的防漂移单测只约束两条：核心四态必须已登�
 （raw 目录只留本地不入库）；检测到 `*.gif` 则走抽稀管线——均匀采样 ≤6 帧
 （含首尾帧）、逐帧同容差抠图、所有帧裁到透明区联合包围盒防抖动，输出
 `<状态>_f{i}.png` 并把 frames/frame_ms json 读改写合并进 manifest。
+`bake_all_smooth()` 插帧烘焙管线再把 ≤8 帧的多帧状态丝滑化：相邻帧
+blend 渐变 + 末尾融回 idle 收招，输出 `<状态>_S{idx:03d}.png`（大写 S）
+并合并 frames/frame_ms/pingpong 进 manifest（eat/sleep 走 140ms 慢速档，
+dance 等全帧档跳过）。
 
 ## 8. 动作菜单（本体右键 = 托盘，共用一份清单）
 

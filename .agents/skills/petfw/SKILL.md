@@ -77,6 +77,11 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
   `<状态>_F{index:03d}.png`（prep_assets 同名视频优先于 GIF）。
 - **安静待机不轮播**：多帧表情平时静立首帧只呼吸浮动（idle bob_amp=2），
   换帧只在 `PetWindow.play_action(name)` 点播时发生——治"定格闪跳"。
+- **丝滑档烘焙与乒乓**：`prep_assets.bake_all_smooth()` 把 ≤8 帧的骨折档
+  逐对相邻帧 blend 插帧并融回 idle 收招（`<状态>_S{idx:03d}.png`，eat/sleep
+  走 140ms 慢速档），manifest 补 `"pingpong": true`——loop 档 ActionPlayer
+  往返走帧，once 档照旧播到尾即谢幕；闲置 90 秒且无气泡时宿主经
+  `petfw/idle_policy.should_auto_sleep` 自动悄然入睡（不发台词，交互自然唤醒）。
 - **SetState 让路**：表演中的切表情请求经 `host.defer_if_playing` 进候补位
   （最后请求赢），谢幕后再应用。
 - **菜单单一来源**：本体右键(contextMenuEvent)与托盘共用

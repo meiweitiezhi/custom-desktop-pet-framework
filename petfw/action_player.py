@@ -38,6 +38,7 @@ class ActionPlayer:
     def __init__(self):
         self.spec: dict | None = None
         self.play = "loop"
+        self.pingpong = False
         self.frame_count = 0
         self.frame_s = 0.0
         self.total_s = 0.0
@@ -53,6 +54,9 @@ class ActionPlayer:
         mode = str((self.spec or {}).get("play") or "loop").strip().lower()
         # 向后兼容：老 manifest 条目没写 play 就按循环待机处理
         self.play = "once" if mode == "once" else "loop"
+        # 乒乓只属于循环档：once+pingpong 仍播到尾即谢幕，不反向
+        self.pingpong = self.play == "loop" \
+            and bool((self.spec or {}).get("pingpong"))
         self.frame_count = len((self.spec or {}).get("frames") or [])
         try:
             frame_ms = float((self.spec or {}).get("frame_ms") or 0)
@@ -90,4 +94,10 @@ class ActionPlayer:
             self.alive = False
             self.done = True
             return None
-        return self._cycles % self.frame_count
+        n = self.frame_count
+        if self.pingpong and n > 1:
+            # 乒乓往返：周期 2(n-1)，越过折返点按下标镜像取帧
+            period = 2 * (n - 1)
+            pos = self._cycles % period
+            return pos if pos < n else period - pos
+        return self._cycles % n

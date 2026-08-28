@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (QApplication, QLabel, QMenu, QSystemTrayIcon,
 
 from . import bus
 from . import config as cfgmod
+from . import idle_policy
 from . import paths
 from .action_player import ActionPlayer
 from .animator_core import DEFAULT_FRAME_MS
@@ -152,6 +153,9 @@ def load_states(display_size: int) -> dict:
                 frame_ms = DEFAULT_FRAME_MS
             entry["frames"] = scaled
             entry["frame_ms"] = frame_ms
+            if spec.get("pingpong"):
+                # 乒乓档：交给 ActionPlayer（loop 往返；once 播到尾即止）
+                entry["pingpong"] = True
         states[name] = entry
     return states
 
@@ -216,6 +220,7 @@ class PetWindow(QWidget):
         self.phase = 0.0
         self.hop_until = 0.0
         self.last_activity = time.monotonic()
+        self._sleep_probe_ms = 0.0    # 闲置入睡探测的独立轻量计数器
         # 动作点播：action 非 None 即表演期；谢幕回归 prev，pending 让路排队
         self.action = None            # ActionPlayer 实例（播放器）
         self._action_prev = None      # 表演开始前的心情（谢幕回归目标）
@@ -405,8 +410,26 @@ class PetWindow(QWidget):
                 return          # 谢幕当拍先收摊，下一拍起恢复正常渲染
             self._render(self.states[self.current], frame_idx=idx)
             return
+        # 走到这里必然空闲（无 action 播放中）：闲置久了悄然入睡
+        self._maybe_auto_sleep(now)
         self._render(self.states[self.current],
                      celebrating=self._celebrating(now))
+
+    def _maybe_auto_sleep(self, now: float):
+        """闲置自动入睡的宿主接缝：约 1.5 秒探一次，判定全在纯函数里。
+
+        独立轻量计数器，不动动画时钟；命中就 set_state("sleep")——不发
+        台词不弹气泡。用户点击/提醒等交互会刷新 last_activity 并把状态
+        自然切走，无需额外唤醒逻辑。
+        """
+        self._sleep_probe_ms += TICK_MS
+        if self._sleep_probe_ms < 1500:
+            return
+        self._sleep_probe_ms = 0.0
+        quiet = now - self.last_activity
+        if idle_policy.should_auto_sleep(quiet, self.current,
+                                         self.bubble.isVisible()):
+            self.set_state("sleep")
 
     # ---------------- 鼠标：拖拽 vs 点击 ----------------
     def mousePressEvent(self, e):

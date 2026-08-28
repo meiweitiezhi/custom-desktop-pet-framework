@@ -13,6 +13,12 @@
   抽稀 <=6 帧 -> 逐帧同一容差抠图 -> 所有帧透明区联合包围盒统一裁剪（防帧间抖动）
   -> 输出 <状态>_f{i}.png。
 两类产物都会把 frames/frame_ms 合并进 assets/manifest.json。
+
+插帧烘焙管线（动作流畅度优化）：bake_all_smooth 把帧数 <=8 的多帧状态
+（laugh/shock/cry/love/hide/alien/blushmax/eat/sleep）逐对相邻帧用
+PIL.Image.blend 插出渐变帧，末尾融回 idle 收招，输出 <状态>_S{idx:03d}.png
+并把新 frames/frame_ms/pingpong 合并进 manifest；eat/sleep 走特别慢速档。
+dance 等 61 帧全帧档天生丝滑，明确跳过。
 """
 import json
 import math
@@ -171,6 +177,137 @@ def merge_manifest_entries(entries: dict,
         json.dumps(data, ensure_ascii=False, indent=2) + "\n",
         encoding="utf-8")
     return data
+
+
+# ---------------------------------------------------------------- 插帧烘焙管线
+# 新烘焙帧的命名标签：大写 S 与旧 _f（GIF 抽稀档）/_F（全帧档）区分
+SMOOTH_TAG = "S"
+# 烘焙后单帧时长的合法区间（毫秒）：目标 3 倍原时长，落界外一律钳回
+SMOOTH_MS_MIN, SMOOTH_MS_MAX = 60, 120
+# 多帧状态参与烘焙的帧数上限：dance 等 61 帧全帧档天生丝滑，明确跳过
+SMOOTH_MAX_SOURCE_FRAMES = 8
+# 特别慢速档：eat 咀嚼 / sleep 融化要"慢动作享受"的慵懒感——多插一档
+# 渐变帧、单帧时长下限放宽到 140ms（循环总时长 3 秒以上），其余状态照旧轻快
+SLOW_STATES = ("eat", "sleep")
+SLOW_BLENDS = 3
+SLOW_MS_MIN, SLOW_MS_MAX = 140, 200
+
+
+def load_state_frames(states_dir, entry) -> list:
+    """按 manifest 条目的 frames 顺序读入 RGBA 帧列表。
+
+    frames 里的路径形如 states/laugh_f0.png（相对 assets/），这里只认
+    文件名拼到 states_dir 下——states_dir 就是那个 states 目录本身。
+    """
+    frames = []
+    for rel in entry.get("frames") or ():
+        frames.append(
+            Image.open(Path(states_dir) / Path(str(rel)).name).convert("RGBA"))
+    return frames
+
+
+def interpolate(a: Image.Image, b: Image.Image, steps: int) -> list:
+    """a 与 b 之间生成 steps 张渐变帧（PIL.Image.blend）。
+
+    含 0/1 端点但不重复：只返回中间帧，alpha 取 i/(steps+1)，i=1..steps，
+    渐进单调逼近 b。steps<=0 返回空列表；两图尺寸不齐时对齐到 a。
+    全程确定性：同样输入永远得到逐像素一致的输出。
+    """
+    try:
+        steps = int(steps)
+    except (TypeError, ValueError):
+        return []
+    if steps <= 0:
+        return []
+    a = a.convert("RGBA")
+    b = b.convert("RGBA")
+    if b.size != a.size:
+        b = b.resize(a.size)
+    return [Image.blend(a, b, (i + 1) / (steps + 1)) for i in range(steps)]
+
+
+def bake_smooth(state_entry, states_dir, blends: int = 2,
+                tail_to=None, ms_min: int = SMOOTH_MS_MIN,
+                ms_max: int = SMOOTH_MS_MAX) -> dict:
+    """把一个 6 帧骨折档状态烘焙成丝滑档，返回 manifest 补丁片段。
+
+    1. 读原帧序列 F0..Fn（load_state_frames）；
+    2. 相邻帧间插 blends 张渐变帧 -> 新序列 n + (n-1)*blends 帧；
+    3. tail_to 给了 idle 图时，在末尾追加「收招余韵」：与末帧 50% 融合帧、
+       idle 原图收尾帧，共 2 帧；
+    4. 新帧逐张存 <state>_S{idx:03d}.png（大写 S 与旧 _f/_F 区分）；
+    5. 返回 {"frames": 新帧列表, "frame_ms": ..., "pingpong": True}，
+       frame_ms = clamp(round(原总时长*3/新帧数), ms_min, ms_max)——目标
+       循环总时长约为原来的 3 倍，节奏放慢但仍在界限内。
+    """
+    src = load_state_frames(states_dir, state_entry)
+    if not src:
+        raise ValueError("条目没有可读的 frames，无法烘焙")
+    # 相邻帧间各插 blends 张渐变帧，端点不重复
+    seq = [src[0]]
+    for prev, fr in zip(src, src[1:]):
+        seq.extend(interpolate(prev, fr, blends))
+        seq.append(fr)
+    # 收招余韵：末帧与 idle 融合收尾（50% 过渡 + idle 原图定格）
+    if tail_to is not None:
+        idle = Image.open(tail_to).convert("RGBA")
+        last = seq[-1]
+        seq.extend(interpolate(last, idle, 1))
+        seq.append(idle.resize(last.size) if idle.size != last.size else idle)
+    states_dir = Path(states_dir)
+    states_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(str(state_entry.get("file") or "state")).stem
+    rels = []
+    for i, fr in enumerate(seq):
+        name = f"{stem}_{SMOOTH_TAG}{i:03d}.png"
+        fr.save(states_dir / name)
+        rels.append(f"states/{name}")
+    try:
+        old_ms = int(state_entry.get("frame_ms") or DEFAULT_FRAME_MS)
+    except (TypeError, ValueError):
+        old_ms = DEFAULT_FRAME_MS
+    target_total = len(src) * old_ms * 3
+    frame_ms = int(round(target_total / len(seq)))
+    frame_ms = max(ms_min, min(ms_max, frame_ms))
+    return {"frames": rels, "frame_ms": frame_ms, "pingpong": True}
+
+
+def bake_all_smooth(manifest_path: Path = MANIFEST, states_dir: Path = OUT,
+                    tail=None, blends: int = 2, limit: int =
+                    SMOOTH_MAX_SOURCE_FRAMES) -> dict:
+    """批量烘焙：只处理 0 < len(frames) <= limit 的多帧状态，dance 跳过。
+
+    eat/sleep 走特别慢速档（SLOW_BLENDS/SLOW_MS_*），其余状态维持
+    blends=2、60~120ms。每个状态独立容错——单状态素材缺失只警告跳过，
+    绝不拖垮整批。返回 {"状态名": 补丁片段} 并经 merge_manifest_entries
+    写回 manifest。
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    patch = {}
+    for name, entry in (data.get("states") or {}).items():
+        frames = entry.get("frames")
+        if not isinstance(frames, (list, tuple)) or not frames:
+            continue
+        if len(frames) > limit:
+            print(f"[烘焙] {name}: {len(frames)} 帧全帧档天生丝滑，跳过")
+            continue
+        slow = name in SLOW_STATES
+        try:
+            patch[name] = bake_smooth(
+                entry, states_dir,
+                blends=SLOW_BLENDS if slow else blends,
+                tail_to=tail,
+                ms_min=SLOW_MS_MIN if slow else SMOOTH_MS_MIN,
+                ms_max=SLOW_MS_MAX if slow else SMOOTH_MS_MAX)
+            print(f"[烘焙] {name}: {len(frames)} 帧 -> "
+                  f"{len(patch[name]['frames'])} 帧 "
+                  f"frame_ms={patch[name]['frame_ms']}"
+                  f"{'（慢速档）' if slow else ''}")
+        except Exception as exc:
+            print(f"[烘焙] {name}: 跳过（{exc}）")
+    if patch:
+        merge_manifest_entries(patch, manifest_path)
+    return patch
 
 
 # ---------------------------------------------------------------- 全帧动作管线

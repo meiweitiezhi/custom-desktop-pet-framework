@@ -30,13 +30,15 @@ def sample_frames(total_frames: int, cap: int = DEFAULT_CAP) -> list[int]:
     return [int(p) for p in picks]
 
 
-def schedule(frames_count: int, base_ms: int, celebrate: bool) -> int:
+def schedule(frames_count: int, base_ms: int, celebrate: bool,
+             pingpong: bool = False) -> int:
     """双档节奏：返回换帧间隔（毫秒）。
 
     - celebrate=False 平时慢速卖萌：interval = base_ms * 2；
     - celebrate=True  结算/蹦跶全速狂欢：interval = base_ms。
     frames_count 目前仅用于完整性校验；没帧或 base_ms 非法时返回 0，
     表示"别动"，调用方跳过换帧即可。
+    pingpong 只改走帧顺序（往返），不改变拍间隔——参数为签名贯通预留。
     """
     try:
         n, base = int(frames_count), int(base_ms)
@@ -56,6 +58,34 @@ def next_index(i: int, n: int) -> int:
     if n <= 0:
         return 0
     return (i + 1) % n
+
+
+def next_index_pingpong(i: int, n: int, direction: int = 1) -> tuple:
+    """乒乓步进：到尾反向、回头正向，往返之间不重复边界帧。
+
+    direction 取 +1（正向）/ -1（反向），0 与垃圾值一律当正向。
+    返回 (下一帧下标, 新方向)；n<=0 或 n==1 原地不动且归位正向。
+    例：n=3 时下标序列 0 1 2 1 0 1 2 1 0 ...
+    """
+    try:
+        n = int(n)
+    except (TypeError, ValueError):
+        return 0, 1
+    if n <= 0:
+        return 0, 1
+    try:
+        i = int(i) % n
+    except (TypeError, ValueError):
+        return 0, 1
+    if n == 1:
+        return 0, 1
+    d = 1 if int(direction or 0) >= 0 else -1
+    j = i + d
+    if j >= n:      # 正向撞到尾墙：退一步并反向
+        return n - 2, -1
+    if j < 0:       # 反向撞到头墙：进一步并回正
+        return 1, 1
+    return j, d
 
 
 def validate_rate(rate) -> float | None:
@@ -82,16 +112,24 @@ class FrameClock:
     advance(n) 在到点时拿下一个帧号。
     """
 
-    def __init__(self, base_ms: int, start: int = 0):
+    def __init__(self, base_ms: int, start: int = 0, pingpong: bool = False):
         self.base_ms = max(1, int(base_ms))
         self.index = max(0, int(start))
+        self.pingpong = bool(pingpong)
+        self.direction = 1    # 乒乓档的行进方向：+1 正向 / -1 反向
 
     def interval_ms(self, frames_count: int, celebrate: bool) -> int:
-        return schedule(frames_count, self.base_ms, celebrate)
+        return schedule(frames_count, self.base_ms, celebrate,
+                        pingpong=self.pingpong)
 
     def advance(self, frames_count: int) -> int:
-        self.index = next_index(self.index, frames_count)
+        if self.pingpong:
+            self.index, self.direction = next_index_pingpong(
+                self.index, frames_count, self.direction)
+        else:
+            self.index = next_index(self.index, frames_count)
         return self.index
 
     def reset(self, start: int = 0) -> None:
         self.index = max(0, int(start))
+        self.direction = 1
