@@ -14,6 +14,14 @@ action.tick(dt) 拿当前应显示的帧下标；返回 None 即谢幕。
 
 loop 模式没有三段概念：segments 恒空、永续循环（含乒乓），维持旧行为。
 
+【v5 表演窗口】once 表演段可选两个新 manifest 字段（优先级
+rounds > perform_seconds > 缺省一轮）：
+    "rounds": 2          -> 表演段演满 2 轮（帧下标每轮取模从头再演）
+    "perform_seconds": 5 -> 表演段持续 5 秒（帧下标在窗口内取模循环）
+开了窗口的表演段里 pingpong 照常生效（窗口内连续往返不断轮）；乒乓
+与 hold/transition/max_seconds 联动不变：max_seconds = 三段和 + 1 秒宽限。
+不写新字段的旧状态一轮照旧（dance 等回归零变化）。
+
 【旧实现（帧边界累积清账），注释保留供回滚对照】
     self._accum += dt; steps = int((self._accum + _EPS) // self.frame_s)
     self._cycles += steps              # 已跨过的帧边界数，永不回退
@@ -48,9 +56,32 @@ def _spec_hold_seconds(spec: dict) -> float:
     return hold
 
 
-def action_duration_seconds(spec: dict) -> float:
-    """once 模式的单轮时长 = 表演段 + 定格段 + 转场段（全按秒计）。
+def _spec_rounds(spec: dict) -> int:
+    """读 spec 的表演轮数（v5 新字段 rounds）：非正数/缺写/乱码一律 0。"""
+    if not isinstance(spec, dict):
+        return 0
+    try:
+        rounds = int(spec.get("rounds") or 0)
+    except (TypeError, ValueError):
+        return 0
+    return rounds if rounds > 0 else 0
 
+
+def _spec_perform_seconds(spec: dict) -> float:
+    """读 spec 的表演窗口秒数（v5 新字段 perform_seconds）：非正数/乱码 0。"""
+    if not isinstance(spec, dict):
+        return 0.0
+    try:
+        seconds = float(spec.get("perform_seconds") or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    return seconds if seconds > 0 else 0.0
+
+
+def action_duration_seconds(spec: dict) -> float:
+    """once 模式的完整时长 = 表演段 + 定格段 + 转场段（全按秒计）。
+
+    表演段按窗口口径（v5）：rounds 轮 > perform_seconds 秒 > 缺省一轮。
     loop 模式与垃圾输入一律 0.0，调用方无需判空。
     """
     if not isinstance(spec, dict):
@@ -63,7 +94,15 @@ def action_duration_seconds(spec: dict) -> float:
         return 0.0
     if n <= 0 or frame_ms <= 0:
         return 0.0
-    return n * frame_ms / 1000.0 + _spec_hold_seconds(spec) \
+    perform_s = n * frame_ms / 1000.0
+    rounds = _spec_rounds(spec)
+    if rounds > 0:
+        perform_s = rounds * perform_s
+    else:
+        window_s = _spec_perform_seconds(spec)
+        if window_s > 0:
+            perform_s = window_s
+    return perform_s + _spec_hold_seconds(spec) \
         + t * frame_ms / 1000.0
 
 
@@ -100,6 +139,10 @@ class ActionPlayer:
         self._seg_idx = 0             # 当前段下标
         self._segment_start = 0.0     # 当前段起点（秒）
         self._segment_end = 0.0       # 当前段终点（秒）
+        # —— v5 表演窗口：rounds > perform_seconds > 缺省一轮 ——
+        self.perform_rounds = 0        # 表演段轮数；0 = 没开窗口
+        self.perform_seconds = 0.0     # 表演段窗口秒数；0 = 没开窗口
+        self.perform_pingpong = False  # 窗口内乒乓往返（只属窗口表演）
 
     def start(self, spec: dict, on_finish_state: str = "idle",
               hold_tail_ms: int = 0) -> None:
@@ -137,9 +180,26 @@ class ActionPlayer:
             self.hold_s = 0.0
         # —— 组装显式段列表：0 长段直接跳过，时间线上不留空站 ——
         self.segments = []
+        # 表演窗口裁决（v5）：rounds > perform_seconds > 缺省一轮；
+        # 只有真开了窗口的表演段才在 once 里认乒乓（窗口内连续往返）
+        self.perform_rounds = 0
+        self.perform_seconds = 0.0
+        self.perform_pingpong = False
         if self.play == "once" and valid:
-            self.segments.append(
-                (SEG_PERFORM, self.frame_count * self.frame_s))
+            rounds = _spec_rounds(self.spec)
+            if rounds > 0:
+                self.perform_rounds = rounds
+            else:
+                self.perform_seconds = _spec_perform_seconds(self.spec)
+            self.perform_pingpong = \
+                bool((self.spec or {}).get("pingpong")) \
+                and (self.perform_rounds > 0 or self.perform_seconds > 0)
+            perform_s = self.frame_count * self.frame_s
+            if self.perform_rounds > 0:
+                perform_s = self.perform_rounds * perform_s
+            elif self.perform_seconds > 0:
+                perform_s = self.perform_seconds
+            self.segments.append((SEG_PERFORM, perform_s))
             if self.hold_s > 0:
                 self.segments.append((SEG_HOLD, self.hold_s))
             if self.transition_count > 0:
@@ -193,11 +253,25 @@ class ActionPlayer:
         local = self.elapsed_seconds - self._segment_start
         if name == SEG_PERFORM:
             # 表演段：按 frame_ms 推进 frames 下标
+            if self.perform_rounds > 0 or self.perform_seconds > 0:
+                # 窗口表演：帧下标取模续杯，乒乓在窗口内连续往返
+                return self._cycle_index(
+                    int((local + _EPS) / self.frame_s),
+                    self.perform_pingpong)
             return min(int((local + _EPS) / self.frame_s),
                        self.frame_count - 1)
         # 转场段：按 frame_ms 推进 transition_frames 下标
         return min(int((local + _EPS) / self.frame_s),
                    self.transition_count - 1)
+
+    def _cycle_index(self, cycles: int, pingpong: bool) -> int:
+        """帧边界计数换帧下标：乒乓按 2(n-1) 周期镜像往返，否则取模循环。"""
+        n = self.frame_count
+        if pingpong and n > 1:
+            period = 2 * (n - 1)
+            pos = cycles % period
+            return pos if pos < n else period - pos
+        return cycles % n
 
     def _loop_frame(self) -> int | None:
         """loop 档：维持旧循环行为（含乒乓），秒表换算成帧边界计数。"""
@@ -205,10 +279,4 @@ class ActionPlayer:
             return None
         self.segment = SEG_PERFORM
         cycles = int((self.elapsed_seconds + _EPS) / self.frame_s)
-        n = self.frame_count
-        if self.pingpong and n > 1:
-            # 乒乓往返：周期 2(n-1)，越过折返点按下标镜像取帧
-            period = 2 * (n - 1)
-            pos = cycles % period
-            return pos if pos < n else period - pos
-        return cycles % n
+        return self._cycle_index(cycles, self.pingpong)

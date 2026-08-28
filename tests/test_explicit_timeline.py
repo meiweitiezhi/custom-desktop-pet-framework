@@ -257,7 +257,16 @@ class TestManifestV4(unittest.TestCase):
         for name in ONCE_STATES:
             spec = self.states[name]
             ms = float(spec["frame_ms"])
-            timeline = (len(spec["frames"]) * ms
+            # 表演段按窗口口径（v5）：rounds 轮 / perform_seconds 秒 / 一轮
+            perform_ms = len(spec["frames"]) * ms
+            rounds = int(spec.get("rounds") or 0)
+            if rounds > 0:
+                perform_ms *= rounds
+            else:
+                window_s = float(spec.get("perform_seconds") or 0)
+                if window_s > 0:
+                    perform_ms = window_s * 1000.0
+            timeline = (perform_ms
                         + float(spec["hold_seconds"]) * 1000.0
                         + len(spec["transition_frames"]) * ms) / 1000.0
             max_s = float(spec["max_seconds"])

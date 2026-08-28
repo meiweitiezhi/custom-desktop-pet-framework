@@ -170,7 +170,9 @@
         "states/sleep_f4.png",
         "states/sleep_f5.png"
       ],
-      "source_loop_ms": 2940
+      "source_loop_ms": 2940,
+      "perform_seconds": 5.0,
+      "max_seconds": 6.0
     },
     "shock": {
       "file": "states/shock.png",
@@ -254,7 +256,8 @@
         "states/shock_Q029.png"
       ],
       "hold_seconds": 1.2,
-      "max_seconds": 4.114
+      "rounds": 2,
+      "max_seconds": 5.038
     },
     "dance": {
       "file": "states/dance_F000.png",
@@ -439,7 +442,8 @@
         "states/cry_Q029.png"
       ],
       "hold_seconds": 1.2,
-      "max_seconds": 4.114
+      "perform_seconds": 5.0,
+      "max_seconds": 8.19
     }
   },
   "_disabled_states": {
