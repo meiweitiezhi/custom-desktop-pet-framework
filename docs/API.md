@@ -221,19 +221,34 @@ cmd /c "cd /d %PETFW_HOME% && python -m petfw.react edit"
 }
 ```
 
-**动作字段 v3**（可选键，向后兼容；全帧视频切片 / 点播系统使用）：
+**动作字段 v3 / v4**（可选键，向后兼容；全帧视频切片 / 点播系统使用）：
 
 | 字段 | 含义 |
 |---|---|
 | file | 相对 assets/ 的路径（单图模式必填；多帧模式可保留作静图兜底） |
-| frames | 多帧模式的帧序列，相对 assets/ 的 PNG 路径列表 |
+| frames | 多帧模式的帧序列，相对 assets/ 的 PNG 路径列表（v4 起为纯表演帧） |
 | frame_ms | 帧时长的基准毫秒数（取自 GIF duration 中位数或 int(1000/fps_est)，上限 60ms） |
 | play | `once` 完整播放一轮就谢幕 / `loop` 循环；缺省 `loop`（老条目零改动兼容） |
 | pingpong | `true` 时 loop 档乒乓往返走帧（到尾反向、回头正向），once 档忽略照旧播到尾；缺省不开 |
 | return_to | 谢幕后的建议去向，缺省 `idle`（宿主实际优先回到表演前来路） |
+| transition_frames | **v4** 转场拼接段：压扁回弹 `_Q` 帧序列，独立于 frames（once 收招仪式） |
+| hold_seconds | **v4** 定格段秒数：表演末帧的定格时长（0 = 不定格；shock/cry 1.2、dance 0.0） |
+| max_seconds | **v4** 保险丝上限秒数 = 表演+定格+转场 + 1 秒宽限，显式写进 manifest |
 | bob_amp | 上下浮动幅度 px |
 | period_ms | 浮动周期，越小越欢快 |
 | tilt_deg | 摆动最大倾角 |
+
+**显式三段拼接时间线 v4**（once 状态，shock/cry/dance）：回发呆逻辑是
+「记秒数 + if 判断」的直白形态——表演段（`frames` 播一轮）→ 定格段
+（`hold_seconds` 秒停末帧）→ 转场拼接段（`transition_frames` 压扁回弹
+帧播一轮）→ 谢幕切 `return_to`。ActionPlayer `start()` 把 spec 组装成
+显式段列表 `segments`，`tick(dt)` 每拍把秒表 `elapsed_seconds` 往前拨、
+用 if 判断当前段，三段全走完返回 None。
+
+**宿主秒表保险丝（第二道闸）**：`play_action` 记下 `time.monotonic()` 与
+`max_seconds`，`_tick` 每拍用纯函数 `host.action_overtime(elapsed,
+max_seconds)` 判断，超时直接谢幕回发呆（不补播转场帧）——独立于
+ActionPlayer 内部计时，防任何原因卡死；loop 常驻档与旧条目不设防。
 
 帧序列有两种命名：GIF 抽稀档输出 `<状态>_f{i}.png`（旧 6 帧）；源视频
 全帧档输出 `<状态>_F{index:03d}.png`（大写 F，上限 240 帧）。同名多源时
@@ -246,7 +261,8 @@ cmd /c "cd /d %PETFW_HOME% && python -m petfw.react edit"
 - **安静待机不轮播**：多帧表情平时静立首帧只做呼吸浮动，杜绝旧的 80ms
   "定格闪跳"；换帧只发生在明确点播时；
 - **点播完整播放**：`PetWindow.play_action(name)` 按 frame_ms 全帧率逐帧
-  推进，`play=once` 播完一轮谢幕自动回表演前来路，`loop` 永续循环；
+  推进；once 档走 v4 显式三段（表演→定格→转场拼接）谢幕自动回表演前来路，
+  `loop` 永续循环（无三段概念）；
 - celebrate 档（hop 生效期或结算画面开着）仍会让呼吸/摆动提速加幅，
   但表演期的换帧节奏恒为 frame_ms，不再分档变速。
 
@@ -279,7 +295,9 @@ dance 等全帧档跳过）。`bake_all_smooth_v2()` 则在循环时长不变（
 完成姿态切换（皮筋手法，形状连续无叠影）：表演末帧与 idle 平滑压到
 (sy 0.78, sx 1.18)（锚点=底部中心），恰在最大压扁帧换装到 idle 的同比例
 压扁帧，再 ease_out_back 式经 1.12 过冲回弹落定，输出 `<状态>_Q{idx:03d}.png`
-追加到 frames 尾部（帧数随节拍折算：33ms→30 帧、41ms→24 帧，仪式约 1 秒），
+（帧数随节拍折算：33ms→30 帧、41ms→24 帧，仪式约 1 秒）。v4 起转场帧
+独立写进 `transition_frames` 字段（frames 保持纯表演帧），并按条目折算
+`hold_seconds` 定格秒数与 `max_seconds` 保险丝上限一并写回 manifest，
 幂等重跑先清 `_T`/`_Q` 两代旧帧。cheer 单图经 `bake_cheer_party()` 整活成
 45 帧常驻搞笑循环（两快两慢 ±18° 挥旗+挥臂弧线残影+小跳 → 蓄力猛压 0.75
 弹过冲 1.15 → 12 帧粗转一圈 → 顶点定格 3 帧+三颗五角星爆开 → 落地收招，

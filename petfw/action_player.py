@@ -1,40 +1,74 @@
-"""动作点播播放器的纯逻辑核心：一拍走一步、双模式收摊、误差清账。
+"""动作点播播放器的纯逻辑核心：显式三段拼接时间线（v4）。
 
 不依赖 Qt、不读文件——宿主（host.PetWindow）在 _tick 里只做一件事：
 action.tick(dt) 拿当前应显示的帧下标；返回 None 即谢幕。
+
+回发呆逻辑是「记秒数 + if 判断」的直白形态（主人最高指令）：
+    start 时把 spec 组装成显式段列表 self.segments：
+        [("perform", 表演时长), ("hold", 定格时长), ("transition", 转场时长)]
+    tick 每拍把秒表 self.elapsed_seconds += dt 往前拨，然后用 if 依次判断：
+        秒数没过当前段终点   -> 留在本段（perform/transition 按 frame_ms
+                                 推进帧下标；hold 恒亮末帧）；
+        秒数过了当前段终点   -> 切进下一段；
+        三段全走完           -> 返回 None 谢幕，宿主据此切回 return_to。
+
+loop 模式没有三段概念：segments 恒空、永续循环（含乒乓），维持旧行为。
+
+【旧实现（帧边界累积清账），注释保留供回滚对照】
+    self._accum += dt; steps = int((self._accum + _EPS) // self.frame_s)
+    self._cycles += steps              # 已跨过的帧边界数，永不回退
+    once 播完（_cycles >= 帧数）进 _hold_left 倒计时，赖完才谢幕。
+    转场帧当年直接追加在 frames 尾部，播完自然结束——隐式回发呆，已废弃。
 """
 from __future__ import annotations
 
-# 浮点残渣容忍度：dt 累积到帧边界附近时按到达处理，绝不让它赖场
+# 浮点残渣容忍度：秒数/帧数压线时按到达处理，绝不让它赖场
 _EPS = 1e-9
+
+# v4 段名：显式三段拼接时间线的三个站点（也是 self.segment 的取值）
+SEG_PERFORM = "perform"
+SEG_HOLD = "hold"
+SEG_TRANSITION = "transition"
+
+
+def _spec_hold_seconds(spec: dict) -> float:
+    """读 spec 的定格时长（秒）：v4 的 hold_seconds 优先，旧 hold_tail_ms
+    （毫秒）向后兼容兜底；垃圾值一律 0。"""
+    if not isinstance(spec, dict):
+        return 0.0
+    try:
+        hold = float(spec.get("hold_seconds") or 0)
+    except (TypeError, ValueError):
+        hold = 0.0
+    if hold <= 0:
+        try:
+            hold = max(0.0, int(spec.get("hold_tail_ms") or 0) / 1000.0)
+        except (TypeError, ValueError):
+            hold = 0.0
+    return hold
 
 
 def action_duration_seconds(spec: dict) -> float:
-    """once 模式的单轮时长：len(frames) * frame_ms / 1000 + 尾部定格时长。
+    """once 模式的单轮时长 = 表演段 + 定格段 + 转场段（全按秒计）。
 
-    尾部定格只认 spec 的 hold_tail_ms 字段（毫秒）；loop 模式与垃圾输入
-    一律 0.0，调用方无需判空。
+    loop 模式与垃圾输入一律 0.0，调用方无需判空。
     """
+    if not isinstance(spec, dict):
+        return 0.0
     try:
         n = len(spec.get("frames") or ())
+        t = len(spec.get("transition_frames") or ())
         frame_ms = float(spec.get("frame_ms") or 0)
     except (TypeError, ValueError, AttributeError):
         return 0.0
     if n <= 0 or frame_ms <= 0:
         return 0.0
-    return n * frame_ms / 1000.0 + _spec_hold_seconds(spec)
-
-
-def _spec_hold_seconds(spec: dict) -> float:
-    """读 spec 的 hold_tail_ms 字段（毫秒），垃圾值一律 0。"""
-    try:
-        return max(0.0, int(spec.get("hold_tail_ms") or 0) / 1000.0)
-    except (TypeError, ValueError, AttributeError):
-        return 0.0
+    return n * frame_ms / 1000.0 + _spec_hold_seconds(spec) \
+        + t * frame_ms / 1000.0
 
 
 class ActionPlayer:
-    """一段动作的时间线播放器。
+    """一段动作的时间线播放器（显式三段拼接：perform → hold → transition）。
 
     用法：
         player.start(manifest条目, on_finish_state="idle")
@@ -42,6 +76,9 @@ class ActionPlayer:
     属性：
         alive            是否正在表演（start 成功后为 True）
         on_finish_state  谢幕后的建议去向（宿主自行决定是否采纳）
+        segments         显式段列表 [(段名, 时长秒)]；loop 恒空
+        elapsed_seconds  显式秒表（秒）：每 tick 拨一拍，只加不减
+        segment          当前段名（perform/hold/transition），宿主据此选帧列表
     """
 
     def __init__(self):
@@ -50,22 +87,27 @@ class ActionPlayer:
         self.pingpong = False
         self.frame_count = 0
         self.frame_s = 0.0
-        self.total_s = 0.0
-        self.hold_s = 0.0        # once 尾部定格时长（秒）；loop 恒 0
+        self.hold_s = 0.0          # 定格段时长（秒）；loop 恒 0
+        self.transition_count = 0  # 转场段帧数
+        self.total_s = 0.0         # once 全时间线（三段之和）；loop 恒 0
         self.on_finish_state = "idle"
         self.alive = False
         self.done = False
-        self._cycles = 0     # 已完整跨过的帧边界数（永不回退）
-        self._accum = 0.0    # 本帧内的残留时长（清账式记账）
-        self._hold_left = 0.0    # 定格剩余时长；<=0 即谢幕
+        # —— v4 显式三段拼接时间线 ——
+        self.segments = []            # [(段名, 时长秒)]；0 长段不装填
+        self.elapsed_seconds = 0.0    # 显式秒表：只加不减
+        self.segment = None           # 当前段名；未上场/谢幕后无意义
+        self._seg_idx = 0             # 当前段下标
+        self._segment_start = 0.0     # 当前段起点（秒）
+        self._segment_end = 0.0       # 当前段终点（秒）
 
     def start(self, spec: dict, on_finish_state: str = "idle",
               hold_tail_ms: int = 0) -> None:
-        """装填一段动作并干净重置计时：重复 start 等于中途换节目。
+        """装填一段动作并干净重置秒表：重复 start 等于中途换节目。
 
-        hold_tail_ms：once 序列播完末帧后再定格的时长（毫秒）。显式传
-        >0 时覆盖 spec；传 0/缺省则回落 spec 的 hold_tail_ms 字段。
-        loop 模式无视定格（永续循环不存在「播完」）。
+        hold_tail_ms：定格段时长（毫秒）。显式传 >0 时覆盖 spec 的
+        hold_seconds/hold_tail_ms；传 0/缺省则回落 spec 字段。
+        loop 模式没有定格与转场概念（永续循环不存在「播完」）。
         """
         self.spec = spec if isinstance(spec, dict) else None
         mode = str((self.spec or {}).get("play") or "loop").strip().lower()
@@ -81,32 +123,45 @@ class ActionPlayer:
             frame_ms = 0.0
         valid = self.frame_count > 0 and frame_ms > 0
         self.frame_s = frame_ms / 1000.0 if valid else 0.0
-        # 定格裁决：显式参数说了算，没给（或给了 0/负数/乱码）才听 spec 的
+        self.transition_count = len(
+            (self.spec or {}).get("transition_frames") or [])
+        # 定格时长裁决：显式参数说了算，没给（或给了 0/负数/乱码）才听 spec 的
         try:
-            explicit = int(hold_tail_ms or 0)
+            explicit_ms = int(hold_tail_ms or 0)
         except (TypeError, ValueError):
-            explicit = 0
-        if explicit <= 0:
-            explicit = int(_spec_hold_seconds(self.spec) * 1000)
-        self.hold_s = max(0.0, explicit / 1000.0) if self.play == "once" \
-            else 0.0
-        self.total_s = action_duration_seconds(self.spec) \
-            if self.play == "once" else 0.0
-        if self.play == "once" and explicit > 0:
-            # spec 自带的定格已被显式参数覆盖时，时长按显式值重算
-            self.total_s = self.frame_count * self.frame_s + self.hold_s
+            explicit_ms = 0
+        if self.play == "once":
+            self.hold_s = max(0.0, explicit_ms / 1000.0) if explicit_ms > 0 \
+                else _spec_hold_seconds(self.spec)
+        else:
+            self.hold_s = 0.0
+        # —— 组装显式段列表：0 长段直接跳过，时间线上不留空站 ——
+        self.segments = []
+        if self.play == "once" and valid:
+            self.segments.append(
+                (SEG_PERFORM, self.frame_count * self.frame_s))
+            if self.hold_s > 0:
+                self.segments.append((SEG_HOLD, self.hold_s))
+            if self.transition_count > 0:
+                self.segments.append(
+                    (SEG_TRANSITION, self.transition_count * self.frame_s))
+        self.total_s = sum(dur for _, dur in self.segments)
         self.on_finish_state = on_finish_state or "idle"
-        self._cycles = 0
-        self._accum = 0.0
-        self._hold_left = self.hold_s
+        # 秒表归零，从第一段第一帧开始
+        self.elapsed_seconds = 0.0
+        self._seg_idx = 0
+        self._segment_start = 0.0
+        self._segment_end = self.segments[0][1] if self.segments else 0.0
+        self.segment = self.segments[0][0] if self.segments else None
         self.alive = bool(valid)
         self.done = not self.alive
 
     def tick(self, dt: float) -> int | None:
         """推进 dt 秒，返回当前应显示的帧下标；未开始/已结束/垃圾输入均 None。
 
-        once 播完末帧后若带尾部定格：定格期内一直返回末帧下标，时长耗尽
-        才返回 None 谢幕——宿主画面因此毫无重播/重启感。
+        帧下标按段归属：perform/hold 段返回 frames 的下标（hold 恒为末帧
+        下标）；transition 段返回 transition_frames 的下标——宿主按
+        self.segment 选对应帧列表上屏。
         """
         if not self.alive:
             return None
@@ -114,29 +169,46 @@ class ActionPlayer:
             step = max(0.0, float(dt))
         except (TypeError, ValueError):
             return None
-        if self.frame_s <= 0:
-            return None
-        # 清账式累积：一次吞下多少个整帧就记多少笔账，再大的 dt 也不漂移
-        self._accum += step
-        steps = int((self._accum + _EPS) // self.frame_s)
-        if steps > 0:
-            self._accum -= steps * self.frame_s
-            if self._accum < 0.0:
-                self._accum = 0.0
-            self._cycles += steps
-        if self.play == "once" and self._cycles >= self.frame_count:
-            # 帧段播完：先赖完尾部定格再谢幕
-            if self._hold_left > _EPS:
-                self._hold_left -= step
-                if self._hold_left > _EPS:
-                    return self.frame_count - 1    # 末帧定格
+        # —— 显式记秒数：秒表只加不减 ——
+        self.elapsed_seconds += step
+        if self.play != "once":
+            return self._loop_frame()
+        # —— 依次 if 判断：秒数过了当前段终点就切进下一段 ——
+        while self._seg_idx < len(self.segments) \
+                and self.elapsed_seconds >= self._segment_end - _EPS:
+            self._seg_idx += 1
+            if self._seg_idx < len(self.segments):
+                self._segment_start = self._segment_end
+                self._segment_end = self._segment_start \
+                    + self.segments[self._seg_idx][1]
+        if self._seg_idx >= len(self.segments):
+            # 三段全走完：谢幕（宿主随即切 return_to）
             self.alive = False
             self.done = True
             return None
+        name, _dur = self.segments[self._seg_idx]
+        self.segment = name
+        if name == SEG_HOLD:
+            return self.frame_count - 1     # 定格段：恒亮末帧
+        local = self.elapsed_seconds - self._segment_start
+        if name == SEG_PERFORM:
+            # 表演段：按 frame_ms 推进 frames 下标
+            return min(int((local + _EPS) / self.frame_s),
+                       self.frame_count - 1)
+        # 转场段：按 frame_ms 推进 transition_frames 下标
+        return min(int((local + _EPS) / self.frame_s),
+                   self.transition_count - 1)
+
+    def _loop_frame(self) -> int | None:
+        """loop 档：维持旧循环行为（含乒乓），秒表换算成帧边界计数。"""
+        if self.frame_s <= 0:
+            return None
+        self.segment = SEG_PERFORM
+        cycles = int((self.elapsed_seconds + _EPS) / self.frame_s)
         n = self.frame_count
         if self.pingpong and n > 1:
             # 乒乓往返：周期 2(n-1)，越过折返点按下标镜像取帧
             period = 2 * (n - 1)
-            pos = self._cycles % period
+            pos = cycles % period
             return pos if pos < n else period - pos
-        return self._cycles % n
+        return cycles % n

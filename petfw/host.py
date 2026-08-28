@@ -80,7 +80,8 @@ ACTION_ZH = {"alien_suck": "UFO 吸入"}
 
 # 左键单击专属演出参数：固定句、shock 尾部定格时长（宿主接管，不走驱动）
 CLICK_TEASE = "不要戳我！！！！"
-SHOCK_HOLD_TAIL_MS = 1200
+SHOCK_HOLD_TAIL_MS = 1200   # 与 manifest v4 shock.hold_seconds=1.2 同源同值；
+                            # 显式传参只是沿用旧接口，正主是 manifest 字段
 # 【禁用区】旧单击 hide 定格参数随 hide 态下线，注释保留：
 # HIDE_HOLD_TAIL_MS = 1500
 
@@ -95,6 +96,19 @@ def defer_if_playing(pending, playing, wanted):
     if playing:
         return None, wanted
     return wanted, None
+
+
+def action_overtime(elapsed, max_seconds) -> bool:
+    """动作保险丝的纯判定（宿主独立秒表的第二道闸）：超时了吗？
+
+    max_seconds<=0、缺字段或乱码一律视为不设防（False）——loop 常驻档
+    和没写 v4 字段的旧条目绝不能被误杀。判定只有一行直白的比较。
+    """
+    try:
+        limit = float(max_seconds)
+    except (TypeError, ValueError):
+        return False
+    return limit > 0 and float(elapsed) > limit
 
 
 # ---------------------------------------------------------------- 素材加载
@@ -199,6 +213,27 @@ def load_states(display_size: int) -> dict:
             if spec.get("pingpong"):
                 # 乒乓档：交给 ActionPlayer（loop 往返；once 播到尾即止）
                 entry["pingpong"] = True
+            # v4 动作字段透传：play_action / ActionPlayer / 保险丝都吃这份拷贝
+            for key in ("play", "return_to", "hold_seconds", "max_seconds",
+                        "transition_frames"):
+                if key in spec:
+                    entry[key] = spec[key]
+            # 转场段帧图独立加载成自己的列表（不与表演帧混槽）；
+            # 缺图/坏图只降级（转场段退回亮表演末帧），绝不拦启动
+            trans_rels = [str(r).replace("\\", "/")
+                          for r in (spec.get("transition_frames") or ())]
+            if trans_rels and all(r in available for r in trans_rels):
+                pics = []
+                for rel in trans_rels:
+                    pm = QPixmap(str(ASSETS / rel))
+                    if pm.isNull():
+                        pics = []
+                        break
+                    pics.append(pm.scaled(display_size, display_size,
+                                          Qt.KeepAspectRatio,
+                                          Qt.SmoothTransformation))
+                if pics:
+                    entry["transition_pics"] = pics
         states[name] = entry
     return states
 
@@ -269,6 +304,8 @@ class PetWindow(QWidget):
         # 动作点播：action 非 None 即表演期；谢幕回归 prev，pending 让路排队
         self.action = None            # ActionPlayer 实例（播放器）
         self._action_prev = None      # 表演开始前的心情（谢幕回归目标）
+        self._action_started = 0.0    # 保险丝秒表：动作上场时刻（monotonic）
+        self._action_max = 0.0        # 保险丝上限（秒）；0 = 不设防
         self.pending_state = None     # 表演期间收到的最后一条 SetState 请求
         self._prev_state = None       # 结算画面打开前的心情，关窗时恢复
         self.settlement_open = False  # 全屏结算画面是否正在放
@@ -389,10 +426,10 @@ class PetWindow(QWidget):
                     hold_tail_ms: int | None = None) -> bool:
         """点播一段完整动作：记住来路 -> 播放器接管换帧 -> 谢幕自动回归。
 
-        play 缺省读 manifest 的 v3 字段（play=once 完整播放一轮）；
+        play 缺省读 manifest 的 v4 字段（play=once 完整播放一轮）；
         结算画面等需要持续演出的场合显式传 play="loop"。
-        hold_tail_ms：once 尾部定格毫秒数；None 时回落 manifest 条目的
-        hold_tail_ms 字段（如单击 shock 演出传 1200 定格再回 idle）。
+        hold_tail_ms：once 定格段毫秒数；None 时回落 manifest 的
+        hold_seconds 字段（如单击 shock 演出传 1200，与 manifest 现值同源）。
         无帧的单图状态退化为直接切换（安静待机语义），不进场表演。
         """
         spec = self.states.get(name)
@@ -412,6 +449,13 @@ class PetWindow(QWidget):
         player.start(dict(spec, play=mode), on_finish_state=finish_target,
                      hold_tail_ms=hold_tail_ms or 0)
         self.action = player
+        # 独立秒表保险丝上弦：与 ActionPlayer 内部计时互不相干，双保险
+        try:
+            max_s = float(spec.get("max_seconds") or 0)
+        except (TypeError, ValueError):
+            max_s = 0.0
+        self._action_started = time.monotonic()
+        self._action_max = max_s if mode == "once" else 0.0
         return True
 
     def _finish_action(self):
@@ -419,6 +463,8 @@ class PetWindow(QWidget):
         player, self.action = self.action, None
         base = self._action_prev
         self._action_prev = None
+        self._action_started = 0.0     # 谢幕即撤防：保险丝秒表一并清零
+        self._action_max = 0.0
         fallbacks = [base, getattr(player, "on_finish_state", "idle"), "idle"]
         target = next((s for s in fallbacks if s in self.states), "idle")
         self.set_state(target)
@@ -430,8 +476,13 @@ class PetWindow(QWidget):
         """双档节奏的统一判定：hop 生效期或全屏结算画面开着 = 狂欢档。"""
         return now < self.hop_until or self.settlement_open
 
-    def _render(self, spec: dict, frame_idx=None, celebrating: bool = False):
-        """把一个状态画上屏幕：呼吸/摆动 + 可选的指定帧。"""
+    def _render(self, spec: dict, frame_idx=None, celebrating: bool = False,
+                use_transition: bool = False):
+        """把一个状态画上屏幕：呼吸/摆动 + 可选的指定帧。
+
+        use_transition=True 时亮转场段帧列表（transition_pics），下标是
+        ActionPlayer 转场段给出的 transition_frames 下标。
+        """
         period, amp = spec["period"], spec["amp"]
         if celebrating:
             period = min(period, 0.35)
@@ -442,7 +493,10 @@ class PetWindow(QWidget):
         angle = spec["tilt"] * math.sin(self.phase * math.pi * 4)
 
         if frame_idx is not None and spec.get("frames"):
-            pm = spec["frames"][frame_idx]
+            pics = spec["frames"]
+            if use_transition and spec.get("transition_pics"):
+                pics = spec["transition_pics"]   # 转场段亮转场帧列表
+            pm = pics[min(frame_idx, len(pics) - 1)]
         else:
             # 安静待机：多帧状态静立首帧，不再 ambient 轮播（治"定格闪跳"）
             pm = spec["pixmap"]
@@ -460,11 +514,18 @@ class PetWindow(QWidget):
         now = time.monotonic()
         # 动作播放期：换帧交给 ActionPlayer 裁决；bob/tilt 保持平时微幅
         if self.action is not None:
+            # 第二道秒表保险丝（独立于 ActionPlayer 内部计时）：超时强制
+            # 谢幕。实现取最简单的「直接切」——不补播转场帧，宁可硬切也
+            # 绝不卡死在表演里；正常路径的转场段仍由播放器自己播完。
+            if action_overtime(now - self._action_started, self._action_max):
+                self._finish_action()
+                return
             idx = self.action.tick(dt)
             if idx is None:
                 self._finish_action()
                 return          # 谢幕当拍先收摊，下一拍起恢复正常渲染
-            self._render(self.states[self.current], frame_idx=idx)
+            self._render(self.states[self.current], frame_idx=idx,
+                         use_transition=self.action.segment == "transition")
             return
         # 走到这里必然空闲（无 action 播放中）：闲置久了悄然入睡
         self._maybe_auto_sleep(now)
@@ -855,6 +916,8 @@ class PetWindow(QWidget):
             # 循环档扭舞没有自然终点，这里直接叫停——回归逻辑与 once 相同
             self.action = None
             self._action_prev = None
+            self._action_started = 0.0   # 保险丝一并撤防
+            self._action_max = 0.0
         prev, self._prev_state = self._prev_state, None
         if prev and prev in self.states:
             self.set_state(prev)

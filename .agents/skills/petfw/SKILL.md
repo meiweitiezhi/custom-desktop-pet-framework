@@ -88,12 +88,21 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
 - **纯逻辑核心在 `petfw/animator_core.py`**：sample_frames 均匀抽稀 ≤6 帧、
   schedule/next_index 双档节拍、validate_rate 变速校验——全部无 Qt 可直测。
 - **点播核心在 `petfw/action_player.py::ActionPlayer`**：`start(spec,
-  on_finish_state)` 装填、`tick(dt)->帧下标|None` 推进；once 播完一轮
-  （时长 = len(frames)×frame_ms/1000）谢幕，loop 永续；清账式累积，
-  大小 dt 都不漂移。表现层只消费它的结论。
-- **manifest 三代 schema 并存**：v1 `"file"` 单图照旧；v2 `"frames"`+
+  on_finish_state)` 装填、`tick(dt)->帧下标|None` 推进；once 走 v4
+  **显式三段拼接时间线**——`segments` 段列表（perform 表演一轮 → hold
+  定格 `hold_seconds` 秒停末帧 → transition 转场帧一轮），`tick` 每拍
+  `elapsed_seconds += dt` 记秒数、用 if 判断当前段，三段走完返回 None
+  谢幕回 `return_to`；loop 永续循环（无三段概念）。表现层只消费它的结论
+  （`segment` 属性告诉宿主亮 frames 还是 transition_pics 列表）。
+- **宿主秒表保险丝（第二道闸）**：`play_action` 记 `time.monotonic()` 与
+  manifest `max_seconds`，`_tick` 每拍过 `host.action_overtime()` 纯函数，
+  超时直接谢幕回发呆——独立于 ActionPlayer 内部计时，防任何原因卡死。
+- **manifest 四代 schema 并存**：v1 `"file"` 单图照旧；v2 `"frames"`+
   `"frame_ms"` 多帧（GIF 抽稀 `_f{i}`）；v3 动作字段 `play`(once/loop,
-  缺省 loop 向后兼容)+`return_to`(缺省 idle)。全帧视频档输出
+  缺省 loop 向后兼容)+`return_to`(缺省 idle)；**v4 显式三段**——
+  `frames` 只放表演帧、`transition_frames` 独立转场帧（`_Q` 压扁回弹
+  序列）、`hold_seconds` 定格秒数（shock/cry 1.2、dance 0.0）、
+  `max_seconds`=表演+定格+转场+1 秒宽限。全帧视频档输出
   `<状态>_F{index:03d}.png`（prep_assets 同名视频优先于 GIF）。
 - **安静待机不轮播**：多帧表情平时静立首帧只呼吸浮动（idle bob_amp=2），
   换帧只在 `PetWindow.play_action(name)` 点播时发生——治"定格闪跳"。
@@ -109,12 +118,14 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
   词条只列已加载出图的状态，缺图自动隐藏。改菜单只改这一处。
   五态精简后「天气演示」「模拟hook(edit)」经主人拍板暂时下线
   （构建器里整段注释保留，weather 扩展与桥接通路不动）。
-- **转场补帧（once 收招不再硬切）**：主路径已换成
+- **转场拼接段（once 收招不再硬切）**：主路径是
   `prep_assets.bake_squash_return()` 压扁回弹转场——表演末帧与 idle 平滑压到
   (sy 0.78, sx 1.18)（锚点=底部中心），恰在最大压扁帧换装到 idle 同比例压扁
   帧（形状连续无叠影），再 ease_out_back 式经 1.12 过冲回弹落定；输出
-  `<状态>_Q{idx:03d}.png`（33ms→30 帧、41ms→24 帧，仪式约 1 秒），幂等重跑
-  先清 `_T`/`_Q` 两代旧帧；旧渐变方案 `extend_return_transition()`（12 张
+  `<状态>_Q{idx:03d}.png`（33ms→30 帧、41ms→24 帧，仪式约 1 秒）。v4 起
+  转场帧独立写进 `transition_frames` 字段（frames 不再追加转场帧），并
+  折算 `hold_seconds`/`max_seconds` 写回 manifest；幂等重跑先清 `_T`/`_Q`
+  两代旧帧；旧渐变方案 `extend_return_transition()`（12 张
   `_T` 帧）保留供回滚。cheer 单图经 `bake_cheer_party()` 变 45 帧常驻搞笑
   循环（play=loop，挥旗+猛压+粗转+星星爆开连招）。一键重烤：`python prep_assets.py --rebuild`
   （压扁转场 + cheer 派对 + sleep 提速 90ms，确定性幂等）。

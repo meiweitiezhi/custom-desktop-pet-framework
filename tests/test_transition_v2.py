@@ -112,11 +112,13 @@ class TestBakeSquashReturn(unittest.TestCase):
         return prep_assets.bake_all_squash_returns(
             self.states, self.manifest_path, targets=targets)
 
-    def _q_seq(self, name, n_tail):
-        frag = {"frames": self._read_manifest()["states"][name]["frames"]}
-        return prep_assets.load_state_frames(self.states, frag)[-n_tail:]
+    def _q_seq(self, name, _n_tail=None):
+        # v4：转场帧独立成 transition_frames 字段，整个列表就是 _Q 序列
+        frag = {"frames": self._read_manifest()["states"][name]
+                ["transition_frames"]}
+        return prep_assets.load_state_frames(self.states, frag)
 
-    # ------------------------------------------------------------ 追加计数
+    # ------------------------------------------------------------ 转场独立
     def test_appends_exact_Q_frames_keeps_frame_ms(self):
         done = self._run()
         data = self._read_manifest()["states"]
@@ -124,17 +126,18 @@ class TestBakeSquashReturn(unittest.TestCase):
         # 33ms 载波 -> round(1000/33)=30 帧；41ms -> round(1000/41)=24 帧
         expect = {"shock": (6, 30, 33), "cry": (2, 30, 33), "dance": (2, 24, 41)}
         for name, (n_base, n_q, ms) in expect.items():
-            rels = data[name]["frames"]
-            self.assertEqual(len(rels), n_base + n_q, f"{name} 精确追加 {n_q} 帧")
-            self.assertEqual(data[name]["frame_ms"], ms,
+            spec = data[name]
+            self.assertEqual(len(spec["frames"]), n_base,
+                             f"{name} frames 保持纯表演帧，不追加转场")
+            self.assertEqual(spec["transition_frames"],
+                             [f"states/{name}_Q{i:03d}.png" for i in range(n_q)],
+                             f"{name} 转场帧独立成 transition_frames 字段")
+            self.assertEqual(spec["frame_ms"], ms,
                              f"{name} frame_ms 沿用条目原值不变")
-            self.assertEqual(rels[:n_base],
+            self.assertEqual(spec["frames"],
                              [f"states/{name}_{'F' if name == 'dance' else 'D'}"
                               f"{i:03d}.png" for i in range(n_base)],
-                             f"{name} 表演帧段原样保留在头部")
-            self.assertEqual(rels[n_base:],
-                             [f"states/{name}_Q{i:03d}.png" for i in range(n_q)],
-                             f"{name} 转场帧命名规约 <状态>_Q{{idx:03d}}.png")
+                             f"{name} 表演帧段原样保留")
 
     # ------------------------------------------------------------ 压扁曲线
     def test_squash_minimum_in_middle_and_in_band(self):
@@ -170,32 +173,46 @@ class TestBakeSquashReturn(unittest.TestCase):
 
     # ---------------------------------------------------------------- 幂等
     def test_idempotent_rerun_bytes_and_purges_legacy_T_and_Q(self):
-        # 手工埋两代历史遗留：_T 渐变帧与上一轮 _Q 帧各一张（文件+引用）
+        # 手工埋两代历史遗留：_T 渐变帧与上一轮 _Q 帧各一张（文件+引用），
+        # 表演 frames 与转场 transition_frames 两个槽位都要能清干净
         data = self._read_manifest()
         data["states"]["shock"]["frames"] = (
             ["states/shock_T004.png", "states/shock_Q099.png"]
             + data["states"]["shock"]["frames"])
+        data["states"]["shock"]["transition_frames"] = (
+            ["states/shock_T004.png", "states/shock_Q099.png"])
         self._write_manifest(data)
         (self.states / "shock_T004.png").write_bytes(
             (self.states / "shock_D000.png").read_bytes())
         (self.states / "shock_Q099.png").write_bytes(
             (self.states / "shock_D001.png").read_bytes())
         first = self._run()
-        n1 = {k: len(v) for k, v in first.items()}
         self.assertFalse((self.states / "shock_T004.png").exists(),
                          "旧 _T 帧文件必须被幂等清理")
         self.assertFalse((self.states / "shock_Q099.png").exists(),
                          "上一轮 _Q 帧文件必须被幂等清理")
         self.assertEqual(list(self.states.glob("shock_T*.png")), [])
         self.assertEqual(len(list(self.states.glob("shock_Q*.png"))), 30)
+        data1 = self._read_manifest()
+        self.assertEqual(data1["states"]["shock"]["frames"][:6],
+                         [f"states/shock_D{i:03d}.png" for i in range(6)])
+        self.assertEqual(data1["states"]["shock"]["transition_frames"],
+                         [f"states/shock_Q{i:03d}.png" for i in range(30)])
         bytes1 = {name: [(self.states / pathlib.Path(r).name).read_bytes()
-                         for r in rels[-30:]] for name, rels in first.items()}
+                         for r in data1["states"][name]["transition_frames"]]
+                  for name in first}
         second = self._run()
-        self.assertEqual({k: len(v) for k, v in second.items()}, n1,
+        self.assertEqual({k: len(v) for k, v in second.items()}, 
+                         {k: len(v) for k, v in first.items()},
                          "重跑不得再次追加：先清旧 _Q 再生成")
         self.assertEqual(first, second, "重跑 frames 列表必须逐字一致")
+        data2 = self._read_manifest()
+        self.assertEqual(data1["states"]["shock"]["transition_frames"],
+                         data2["states"]["shock"]["transition_frames"],
+                         "重跑 transition_frames 必须逐字一致")
         bytes2 = {name: [(self.states / pathlib.Path(r).name).read_bytes()
-                         for r in rels[-30:]] for name, rels in second.items()}
+                         for r in data2["states"][name]["transition_frames"]]
+                  for name in first}
         self.assertEqual(bytes1, bytes2, "重跑产物必须字节级一致")
 
     # ------------------------------------------------------------ 换装点平滑
@@ -208,9 +225,11 @@ class TestBakeSquashReturn(unittest.TestCase):
         """
         for name, n_base in (("shock", 6), ("cry", 2), ("dance", 2)):
             self._run((name,))
-            seq = prep_assets.load_state_frames(
-                self.states, {"frames": self._read_manifest()
-                              ["states"][name]["frames"]})
+            data = self._read_manifest()["states"][name]
+            seq = (prep_assets.load_state_frames(
+                       self.states, {"frames": data["frames"]})
+                   + prep_assets.load_state_frames(
+                       self.states, {"frames": data["transition_frames"]}))
             a = seq[n_base - 1]
             idle = Image.open(self.states / "idle.png").convert("RGBA")
             b = idle.resize(a.size) if idle.size != a.size else idle
@@ -230,8 +249,15 @@ class TestBakeSquashReturn(unittest.TestCase):
             manifest_path=self.manifest_path, states_dir=self.states,
             idle_img=self.states / "idle.png")
         data = self._read_manifest()["states"]
-        self.assertEqual(len(data["shock"]["frames"]), 6 + 30)
-        self.assertEqual(len(data["dance"]["frames"]), 2 + 24)
+        # v4：frames 保持纯表演帧，转场帧独立成 transition_frames 字段
+        self.assertEqual(len(data["shock"]["frames"]), 6)
+        self.assertEqual(len(data["shock"]["transition_frames"]), 30)
+        self.assertEqual(len(data["dance"]["frames"]), 2)
+        self.assertEqual(len(data["dance"]["transition_frames"]), 24)
+        # v4 字段齐备：hold_seconds/max_seconds 显式写出
+        self.assertEqual(data["shock"]["hold_seconds"], 0.0)
+        self.assertEqual(data["shock"]["max_seconds"],
+                         round((6 * 33 + 0 + 30 * 33 + 1000) / 1000.0, 3))
         # cheer 派对：45 帧循环档
         self.assertEqual(len(data["cheer"]["frames"]), 45)
         self.assertEqual(data["cheer"]["frame_ms"], 33)

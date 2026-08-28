@@ -39,6 +39,9 @@ idle 姿态时（如 _D 烘焙自带收招定格）直接复用 idle 图免逐�
 最大压扁帧无缝换装到 idle 的同比例压扁帧，再 ease_out_back 式经 1.12
 过冲回弹落定为 idle；输出 <状态>_Q{idx:03d}.png，帧数随节拍折算
 （33ms→30 帧、41ms→24 帧，仪式时长都约 1 秒），幂等清 _T/_Q 两代旧帧。
+v4 起（显式三段拼接时间线）：转场帧不再追加进 frames 尾部，而是独立写进
+transition_frames 字段，同时按条目折算 hold_seconds 定格秒数与
+max_seconds 秒表保险丝（表演+定格+转场+1 秒宽限）显式写进 manifest。
 
 打气派对管线（任务二）：bake_cheer_party 把单图 cheer 整活成 45 帧常驻
 搞笑循环（play=loop）——两快两慢 ±18° 挥旗（带小跳与挥臂弧线残影）→
@@ -598,6 +601,8 @@ SQUASH_SX_MAX = 1.18       # 压扁同时横向鼓出，保体积
 SQUASH_OVERSHOOT = 1.12    # 第二幕过冲顶点（>1.08 可测）
 SQUASH_ACT1_SHARE = 0.4    # 第一幕帧数占比（其余归回弹幕）
 SQUASH_MIN_FRAMES = 8      # 帧数下限：再短就没有仪式感了
+# v4 保险丝宽限：max_seconds = 表演+定格+转场 + 1.0 秒宽限（毫秒口径参与折算）
+MAX_SECONDS_GRACE_MS = 1000
 # sleep 播放提速（主人拍板）：帧图不动，纯节拍 140→90ms
 SLEEP_SPEED_MS = 90
 
@@ -647,7 +652,9 @@ def bake_squash_return(state_entry, states_dir, idle_img,
     3. 后 60% 帧数 ease_out_back 式从 0.78 经 1.12 过冲回弹落定为 B 原图。
     幂等：先清该状态旧转场帧（_T 与 _Q 两代都清）再生成 _Q 序列；
     frame_ms 沿用条目原值（dance 的 41ms 档传 total_frames=24 同样约 1 秒）。
-    返回 manifest 补丁片段（frames=表演帧+新转场帧的完整列表）。
+    v4 起（显式三段时间线）返回的补丁不再把转场帧追加进 frames，而是
+    独立成 transition_frames 字段；hold_seconds 读条目（缺省 0.0），
+    max_seconds = 表演+定格+转场 + 1 秒宽限，宿主秒表保险丝直接吃这个数。
     """
     states_dir = Path(states_dir)
     # 状态名：显式传入优先；否则从 file 去掉姿态标签后缀派生（shock_D000→shock）
@@ -694,27 +701,41 @@ def bake_squash_return(state_entry, states_dir, idle_img,
     for tag in LEGACY_TRANSITION_TAGS:
         for old in sorted(states_dir.glob(f"{stem}_{tag}[0-9][0-9][0-9].png")):
             old.unlink()
-    rels = list(base_rels)
+    q_rels = []
     for i, fr in enumerate(seq):
-        name = f"{stem}_{TRANSITION_TAG_V2}{i:03d}.png"
-        fr.save(states_dir / name)
-        rels.append(f"states/{name}")
+        fname = f"{stem}_{TRANSITION_TAG_V2}{i:03d}.png"
+        fr.save(states_dir / fname)
+        q_rels.append(f"states/{fname}")
     try:
         ms = int(state_entry.get("frame_ms") or V2_FRAME_MS)
     except (TypeError, ValueError):
         ms = V2_FRAME_MS
-    return {"frames": rels, "frame_ms": ms, "play": "once",
-            "return_to": "idle", "transition": "squash_return"}
+    # v4 保险丝预算：表演 + 定格 + 转场 + 宽限，显式写进 manifest
+    try:
+        hold_ms = int(round(float(state_entry.get("hold_seconds") or 0)
+                            * 1000))
+    except (TypeError, ValueError):
+        hold_ms = 0
+    total_ms = len(base_rels) * ms + hold_ms + len(q_rels) * ms \
+        + MAX_SECONDS_GRACE_MS
+    return {"frames": list(base_rels),        # frames 保持纯表演帧
+            "transition_frames": q_rels,      # 转场帧独立成段
+            "frame_ms": ms,
+            "hold_seconds": hold_ms / 1000.0,
+            "max_seconds": round(total_ms / 1000.0, 3),
+            "play": "once", "return_to": "idle",
+            "transition": "squash_return"}
 
 
 def bake_all_squash_returns(states_dir: Path = OUT,
                             manifest_path: Path = MANIFEST,
                             targets=SQUASH_TARGETS) -> dict:
-    """批量压扁回弹转场并写回 manifest（幂等，替换旧 _T 渐变转场主路径）。
+    """批量压扁回弹转场并写回 manifest（幂等；v4 起转场帧独立成段）。
 
     只处理活动区 play=once 且带帧序列的目标状态；转场帧数随条目节拍折算
-    （33ms→30 帧、41ms→24 帧，仪式时长都约 1 秒）。单状态素材缺失只警告
-    跳过。返回 {"状态名": 完整 frames 列表}。
+    （33ms→30 帧、41ms→24 帧，仪式时长都约 1 秒）。frames 保持纯表演帧，
+    转场帧写进 transition_frames 字段，同时折算 hold_seconds/max_seconds。
+    单状态素材缺失只警告跳过。返回 {"状态名": 表演帧列表}。
     """
     states_dir = Path(states_dir)
     data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
@@ -741,11 +762,10 @@ def bake_all_squash_returns(states_dir: Path = OUT,
         except Exception as exc:
             print(f"[压扁转场] {name}: 跳过（{exc}）")
             continue
-        base_n = len(rels) - sum(
-            1 for r in rels if Path(str(r)).name.startswith(
-                (f"{name}_T", f"{name}_Q")))
-        print(f"[压扁转场] {name}: 表演 {base_n} 帧 + 追加 "
-              f"{len(patch[name]['frames']) - base_n} 张 _Q 帧 @ {ms}ms")
+        print(f"[压扁转场] {name}: 表演 {len(patch[name]['frames'])} 帧 + "
+              f"独立转场 {len(patch[name]['transition_frames'])} 张 _Q 帧 "
+              f"@ {ms}ms（保险丝 max_seconds="
+              f"{patch[name]['max_seconds']}）")
     if patch:
         merge_manifest_entries(patch, manifest_path)
     return {name: p["frames"] for name, p in patch.items()}
@@ -948,7 +968,8 @@ def rebuild_all_animation_assets(manifest_path: Path = MANIFEST,
                                  idle_img=None) -> dict:
     """一键重烤全部程序合成动画资产并写回 manifest（幂等，可反复执行）。
 
-    按序执行：压扁回弹转场（shock/cry/dance，替换旧 _T/_Q 两代转场）→
+    按序执行：压扁回弹转场（shock/cry/dance，v4 起 frames 保持纯表演帧、
+    转场帧独立成 transition_frames 并折算 hold_seconds/max_seconds）→
     cheer 打气派对 45 帧循环 → sleep 播放提速（frame_ms→90，帧图不动）。
     全部产物从源帧确定性重建；主代理合并后即可在主仓一键重烤。
     """
