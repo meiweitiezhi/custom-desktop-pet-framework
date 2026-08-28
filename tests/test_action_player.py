@@ -107,6 +107,73 @@ class TestLifecycle(unittest.TestCase):
             self.assertIsNone(p.tick(0.016))
 
 
+class TestHoldTail(unittest.TestCase):
+    """once 尾部定格：播完末帧后按 hold_tail_ms 赖场，期内一直亮末帧。"""
+
+    def test_hold_returns_last_frame_then_finishes(self):
+        p = ActionPlayer()
+        p.start(_spec(n=3, frame_ms=100, play="once"), hold_tail_ms=500)
+        seq = []
+        for _ in range(30):
+            seq.append(p.tick(0.05))
+            if seq[-1] is None:
+                break
+        # 帧段 0,1,1,2,2 之后进入定格：末帧 2 持续 0.5s（10 拍）
+        self.assertEqual(seq[:5], [0, 1, 1, 2, 2])
+        self.assertEqual(seq[5:-1], [2] * (len(seq) - 6),
+                         "定格期内必须一直亮末帧")
+        self.assertIsNone(seq[-1])
+
+    def test_total_duration_is_frames_plus_hold(self):
+        p = ActionPlayer()
+        p.start(_spec(n=10, frame_ms=20, play="once"), hold_tail_ms=300)
+        self.assertAlmostEqual(p.total_s, 0.2 + 0.3, places=6)
+        ticks = 0
+        while p.tick(0.001) is not None:
+            ticks += 1
+            self.assertLess(ticks, 1200, "定格结束后还赖场")
+        self.assertAlmostEqual(ticks, 500, delta=3,
+                               msg="总驻留=帧时和+hold")
+
+    def test_hold_zero_keeps_old_behavior(self):
+        p = ActionPlayer()
+        p.start(_spec(n=3, frame_ms=100, play="once"), hold_tail_ms=0)
+        seq = [p.tick(0.05) for _ in range(20)]
+        self.assertEqual(seq[:6], [0, 1, 1, 2, 2, None])
+        self.assertTrue(all(s is None for s in seq[5:]))
+        # spec 里的 hold_tail_ms=0（如 alien_suck 条目）同样不赖场
+        p2 = ActionPlayer()
+        p2.start(dict(_spec(n=2, frame_ms=50, play="once"), hold_tail_ms=0))
+        seq2 = [p2.tick(0.025) for _ in range(20)]
+        self.assertEqual(seq2[:4], [0, 1, 1, None])
+
+    def test_loop_ignores_hold(self):
+        p = ActionPlayer()
+        p.start(_spec(n=3, frame_ms=50, play="loop"), hold_tail_ms=1500)
+        seq = [p.tick(0.025) for _ in range(400)]
+        self.assertTrue(all(s is not None for s in seq),
+                        "loop 模式必须无视尾部定格永续循环")
+
+    def test_hold_reads_spec_when_param_absent(self):
+        # 显式参数 > 0 时覆盖 spec；缺省时回落 spec 的 hold_tail_ms 字段
+        p = ActionPlayer()
+        p.start(dict(_spec(n=2, frame_ms=100, play="once"), hold_tail_ms=200))
+        self.assertAlmostEqual(p.total_s, 0.2 + 0.2, places=6)
+        p2 = ActionPlayer()
+        p2.start(dict(_spec(n=2, frame_ms=100, play="once"), hold_tail_ms=200),
+                 hold_tail_ms=999)
+        self.assertAlmostEqual(p2.total_s, 0.2 + 0.999, places=6)
+
+    def test_hold_invalid_values_safe(self):
+        for bad in (-5, "abc", None):
+            p = ActionPlayer()
+            p.start(_spec(n=2, frame_ms=50, play="once"), hold_tail_ms=bad)
+            seq = [p.tick(0.025) for _ in range(20)]
+            self.assertTrue(any(s is None for s in seq),
+                            f"hold={bad!r} 不许定格")
+
+
+
 # ------------------------------------------------- SetState 让路裁决（纯函数）
 class TestDeferIfPlaying(unittest.TestCase):
     def test_playing_defers_and_last_request_wins(self):

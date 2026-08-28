@@ -32,35 +32,47 @@ def _says(cmds):
     return [c.text for c in cmds if isinstance(c, bus.Say)]
 
 
-# ------------------------------------------------------------ 任务二：回归彩蛋
-class TestAwayReturn(unittest.TestCase):
+# ------------------------------------------------ 任务二：点击接管与台词池迁移
+# 单击行为已由宿主专属接管（固定句 + 专属音效 + hide 定格演出），规则脑不再
+# 处理 click；原 CLICK_LINES 随机池整体迁移为 praise/kiss 的 PRAISE_LINES。
+class TestClickTakenOverAndPraisePool(unittest.TestCase):
     def setUp(self):
         self.d = RuleDriver()
 
-    def test_short_or_no_away_keeps_random_pool(self):
-        # 没带 away_seconds、太短、拖拽误触的负数：全部走原随机池（不能切表情）
-        for away in (None, 0, -3, 59):
-            ev = {"type": "click"}
-            if away is not None:
-                ev["away_seconds"] = away
+    def test_click_no_longer_dispatched_to_driver(self):
+        # click 不再有专属分支：落进未知事件兜底（Hop），绝不冒随机台词
+        for ev in ({"type": "click"},
+                   {"type": "click", "away_seconds": 700},
+                   {"type": "click", "away_seconds": 200},
+                   {"type": "click", "away_seconds": 30}):
             cmds = self.d.react(ev)
-            self.assertEqual(_states(cmds), [], f"away={away} 不该切表情")
-            self.assertTrue(_says(cmds))
+            self.assertEqual(_states(cmds), [], f"ev={ev} 不许切表情")
+            self.assertEqual(_says(cmds), [], f"ev={ev} 不许再说话")
+            self.assertTrue(any(isinstance(c, bus.Hop) for c in cmds))
 
-    def test_medium_absence_laugh(self):
-        for away in (180, 300, 599):   # 边界：180 秒起算「懒得理我」档
-            cmds = self.d.react({"type": "click", "away_seconds": away})
-            self.assertEqual(_states(cmds), ["laugh"], f"away={away}")
-            joined = "".join(_says(cmds))
-            self.assertIn("总算舍得回来", joined)
+    def test_away_tiers_are_gone(self):
+        # 「别走别走」三档随 click 分支一起退役：任何 away 值都走兜底
+        from petfw.drivers import rule as rule_mod
+        for attr in ("CLICK_LINES", "AWAY_LOST_SECONDS", "AWAY_SLACK_SECONDS",
+                     "AWAY_LOST_LINES", "AWAY_SLACK_LINES", "_click_cmds"):
+            self.assertFalse(hasattr(rule_mod, attr), f"{attr} 应已删除")
 
-    def test_long_absence_shock(self):
-        for away in (600, 3600):       # 边界：600 秒起算「离家出走」档
-            cmds = self.d.react({"type": "click", "away_seconds": away})
-            self.assertEqual(_states(cmds), ["shock"], f"away={away}")
-            joined = "".join(_says(cmds))
-            self.assertIn("别走别走", joined)
-            self.assertIn("你去哪了", joined)
+    def test_praise_pool_migrated_from_click_lines(self):
+        from petfw.drivers.rule import PRAISE_LINES
+        # 池子由原 CLICK_LINES 九句 + 原 praise/kiss 两句合并而来
+        self.assertEqual(len(PRAISE_LINES), 11)
+        for line in ("嘿嘿…被摸头了", "今天也要元气满满哦！", "再戳我就要炸毛啦！",
+                     "嘿嘿…被夸得好开心嘛", "mua！收下我的小心心！"):
+            self.assertIn(line, PRAISE_LINES)
+
+    def test_praise_and_kiss_share_pool_with_love(self):
+        from petfw.drivers.rule import PRAISE_LINES
+        for ev in ("praise", "kiss"):
+            for _ in range(20):
+                cmds = self.d.react({"type": "hook", "event": ev})
+                self.assertEqual(_states(cmds), ["love"], f"event={ev}")
+                for t in _says(cmds):
+                    self.assertIn(t, PRAISE_LINES)
 
     def test_describe_reports_minutes_and_seconds(self):
         m = bus.describe_event({"type": "click", "away_seconds": 300})
@@ -71,7 +83,7 @@ class TestAwayReturn(unittest.TestCase):
         self.assertIn("20 秒", s)
 
     def test_describe_plain_click_unchanged(self):
-        # 老事件协议（无 away 字段）保持原样，已有文案不漂移
+        # 老事件协议（无 away 字段）保持原样，已有文案不漂移（bus 未动）
         self.assertIn("戳", bus.describe_event({"type": "click"}))
 
 
@@ -207,7 +219,7 @@ class TestAuditNote(unittest.TestCase):
     def test_fallback_reply_never_gets_note(self):
         # 走规则脑兜底的回复是本地台词，不该被盖上“过审”章
         d = LLMDriver(_cp(), fallback=RuleDriver(), rng=_ScriptedRng(1, 1))
-        for t in _says(d.react({"type": "click"})):
+        for t in _says(d.react({"type": "hook", "event": "praise"})):
             self.assertNotIn(self.HIT_SUFFIX_MARK, t)
 
 

@@ -36,8 +36,12 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
 扩展一律走 bus 事件(growth/weather)，不在 host 里做业务判断
 ```
 
-音效零素材：`petfw/sound_core.py` 运行期用标准库合成七种短音效（WAV 落系统临时目录），
+音效零素材：`petfw/sound_core.py` 运行期用标准库合成八种短音效（WAV 落系统临时目录），
 宿主 `PetWindow.play()` 经 QSoundEffect 播放并全程静默降级，改声音手感只动 sound_core。
+左键单击/双击由宿主专属接管（判定纯逻辑在 `petfw/click_flow.py`，280ms 可注入时钟窗口）：
+单击=固定句「不要戳我！！！！」+ `[sound] click_sfx` 专属音效（缺省回落 pop）+ hide 演出
+尾部定格 1.5 秒再回 idle，双击=`alien_suck` 吸入演出（synth_actions 烘焙 39 帧入库 manifest）
++ 合成 suck 音效；结算画面打开期间点击一律忽略、不触发任何演出。
 
 ## 常见改动配方
 

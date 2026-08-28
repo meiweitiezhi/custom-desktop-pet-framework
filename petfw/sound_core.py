@@ -5,7 +5,7 @@
 - synthesize 是纯函数绝不落盘；播放用的临时 wav 由宿主写系统临时目录，
   属运行期产物，永不入库。
 
-七种音效全部 ≤0.5 秒、峰值统一归一限幅 0.85，足够当桌宠的「口型拟声」。
+八种音效全部 ≤0.5 秒、峰值统一归一限幅 0.85，足够当桌宠的「口型拟声」。
 """
 import io
 import math
@@ -15,8 +15,8 @@ import wave
 SAMPLE_RATE = 22050   # 反馈类短音效的甜点采样率：合成快、文件小、够清亮
 PEAK_LIMIT = 0.85     # 全体样本峰值上限（相对满幅），杜绝爆音破声
 
-# 七种音效词表；宿主触发与测试防漂移都以这里为准
-SOUND_NAMES = ("pop", "boing", "ding", "chime", "wah", "tada", "kiss")
+# 八种音效词表；宿主触发与测试防漂移都以这里为准
+SOUND_NAMES = ("pop", "boing", "ding", "chime", "wah", "tada", "kiss", "suck")
 
 
 def available_names() -> tuple:
@@ -170,6 +170,26 @@ def _gen_kiss(rate: int) -> list:
     return _fade_edges(out, rate)
 
 
+def _gen_suck(rate: int) -> list:
+    """外星吸入 suck：300ms 相位连续上扫 600→1600Hz 正弦 + 高频微光 shimmer。
+
+    上扫给出「被吸走」的升空感，shimmer 是叠在主音上的弱高频闪光，
+    幅度随主音包络同涨同落，末端不炸耳。
+    """
+    n = max(8, int(0.30 * rate))
+    out = []
+    ph = 0.0
+    for i in range(n):
+        u = i / (n - 1)
+        f = 600.0 + 1000.0 * u
+        ph += 2.0 * math.pi * f / rate
+        env = min(1.0, u / 0.10, (1.0 - u) / 0.18)
+        shimmer = (0.20 * math.sin(2.0 * math.pi * 2400.0 * i / rate + 0.7)
+                   * math.sin(math.pi * u))
+        out.append(env * (math.sin(ph) + shimmer) / 1.2)
+    return _fade_edges(out, rate)
+
+
 _GENERATORS = {
     "pop": _gen_pop,
     "boing": _gen_boing,
@@ -178,6 +198,7 @@ _GENERATORS = {
     "wah": _gen_wah,
     "tada": _gen_tada,
     "kiss": _gen_kiss,
+    "suck": _gen_suck,
 }
 
 

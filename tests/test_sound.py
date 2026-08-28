@@ -24,6 +24,7 @@ EXPECTED_SECONDS = {
     "wah": 0.40,
     "tada": 0.28,    # 四连琶音各 70ms
     "kiss": 0.08,
+    "suck": 0.30,    # 外星吸入：600→1600Hz 上扫 + 微光 shimmer
 }
 
 
@@ -39,12 +40,25 @@ def _wave_info(data: bytes):
 class TestSoundCore(unittest.TestCase):
 
     # ---------------------------------------------------------- 词表与兜底
-    def test_available_names_is_seven_tuple(self):
+    def test_available_names_is_eight_tuple(self):
         names = available_names()
         self.assertIsInstance(names, tuple)
         self.assertEqual(set(names),
                          {"pop", "boing", "ding", "chime", "wah", "tada",
-                          "kiss"})
+                          "kiss", "suck"})
+
+    def test_suck_is_a_rising_sweep(self):
+        # 吸入感来自上扫：前半段主频必须低于后半段主频（过零间隔变短）
+        from petfw.sound_core import _gen_suck
+        rate = 22050
+        samples = _gen_suck(rate)
+        first = samples[:len(samples) // 4]
+        last = samples[-len(samples) // 4:]
+        zero_a = sum(1 for a, b in zip(first, first[1:])
+                     if a <= 0 < b or b <= 0 < a)
+        zero_b = sum(1 for a, b in zip(last, last[1:])
+                     if a <= 0 < b or b <= 0 < a)
+        self.assertGreater(zero_b * 2, zero_a, "后段过零数必须显著更多（上扫）")
 
     def test_unknown_name_returns_empty_bytes(self):
         for bad in ("", "boom", "POP", "ding!", None):

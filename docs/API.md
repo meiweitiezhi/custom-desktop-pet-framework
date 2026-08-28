@@ -45,6 +45,7 @@ hook桥接 ┘                     失败自动降级↑
 | settlement | bgm | 结算画面 BGM 总开关，默认 true |
 | settlement | bgm_rate | BGM 变速倍率，默认 2.5；合法区间 0.5~4.0，越界/非法自动回落 1.0 原速 |
 | sound | enabled / volume | 互动音效开关与音量(0~1)：运行期程序合成 WAV 到系统临时目录，零素材文件，无声环境自动静默降级 |
+| sound | click_sfx | 单击专属音效的本地 wav 路径（放 assets/local/click.wav 之类）；留空回落内置合成 pop |
 
 路径说明：开发态 `config.ini` / `runtime.json` 固定在仓库根；用 PyInstaller
 打包的 exe（frozen 模式）下二者生成在 **exe 同目录**（`Path(sys.executable).parent`），
@@ -56,15 +57,14 @@ hook桥接 ┘                     失败自动降级↑
 
 | type | 附加字段 | 触发者 |
 |---|---|---|
-| click | away_seconds=距上次交互秒数 | 左键单击宠物（非拖拽）；带上它可获得「别走别走」回归彩蛋 |
+| click | —（已退役，不再 dispatch 给驱动） | 左键单/双击由宿主专属接管：单击=固定句气泡+click_sfx 专属音效+hide 定格 1.5 秒，双击=alien_suck 吸入+合成 suck 音效；结算画面打开期间一律忽略 |
 | reminder | kind=`drink`/`stretch` | 健康提醒定时器 |
 | idle | seconds=安静秒数 | 无操作 ≥100s 后的随机闲聊 |
 | hook | event, message?, flourish?, streak? | 外部程序经 HTTP 桥送入；宿主在 `_on_hook` 统一合并 BuildStreak 的连败/翻盘判定（doom=连败3起、comeback=连败≥2后取胜） |
 | growth | commits, level, title, leveled_up | Git 成长扫描（托盘「今日战报」、hook `done` 或每日定时触发，正常路径改为弹全屏结算画面） |
 | weather | condition | 天气心情灯（本地演示菜单或你自己的抓取脚本） |
 
-`describe_event()` 会把附加字段翻译成给大模型的处境描述：click 带
-`away_seconds` 时变成「小主人回来了，离开了大约 X 分钟/几秒」；hook 带
+`describe_event()` 会把附加字段翻译成给大模型的处境描述：hook 带
 `flourish` 时先交代连败/翻盘再接原事件——对话脑不写一行代码即免费受益。
 
 ## 3. 命令协议（进程内）

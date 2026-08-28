@@ -56,6 +56,8 @@ city =
 # 零素材文件、离线可用；enabled = false 时整体安静。
 enabled = true
 volume = 0.6
+# 单击专属音效：填本地 wav 路径（放 assets/local/click.wav 之类），留空则用内置 pop
+click_sfx =
 """
 
 

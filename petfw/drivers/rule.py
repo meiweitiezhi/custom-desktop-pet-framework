@@ -5,7 +5,9 @@ from .. import bus
 from ..extensions.weather import state_for as _weather_state_for
 from .base import Driver
 
-CLICK_LINES = [
+# 被夸/被亲的台词池：由原「左键单击随机池」整体迁移而来，并入了原
+# praise/kiss 专属两句（单击行为已由宿主专属接管，不再 dispatch 给驱动）。
+PRAISE_LINES = [
     "嘿嘿…被摸头了",
     "再戳我就要炸毛啦！",
     "痒痒的～",
@@ -15,6 +17,8 @@ CLICK_LINES = [
     "再戳一下，我可能就熟了。",
     "我圆但我不滚——好吧，想推也可以。",
     "嘘…我在假装自己是个安静的鸡蛋。",
+    "嘿嘿…被夸得好开心嘛",
+    "mua！收下我的小心心！",
 ]
 
 REMINDER_LINES = {
@@ -41,8 +45,8 @@ HOOK_LINES = {
     "start": ("cheer", ["开工！我给你举花球！"]),
     "done": ("cheer", ["收工！今晚吃叉子大餐！"]),
     # 外部程序可直接发自定义事件（bridge 不限词表）：被夸/被亲 → 比小心心
-    "praise": ("love", ["嘿嘿…被夸得好开心嘛", "mua！收下我的小心心！"]),
-    "kiss": ("love", ["嘿嘿…被夸得好开心嘛", "mua！收下我的小心心！"]),
+    "praise": ("love", PRAISE_LINES),
+    "kiss": ("love", PRAISE_LINES),
 }
 
 IDLE_HOP_LINES = ["嗯？什么声音", "(眨眼)", "zzang~"]
@@ -58,12 +62,6 @@ GROWTH_UP_LINES = [
     "升级啦！今天也是闪闪发光的一天！",
     "叮——称号进化！快夸快夸！",
 ]
-
-# 别走别走梗：按离开时长分档（秒）。600 起算「离家出走」，180 起算「偷懒摸鱼」
-AWAY_LOST_SECONDS = 600
-AWAY_SLACK_SECONDS = 180
-AWAY_LOST_LINES = ["别走别走！我班呢！你去哪了嘛…"]
-AWAY_SLACK_LINES = ["总算舍得回来了？"]
 
 # 编译兴衰军师的判定台词：翻盘庆祝 / 连败哀叹
 # 翻盘保留著名台词，状态改比小心心并附带蹦跶；连败缩进帽子里躲着反省
@@ -84,9 +82,7 @@ class RuleDriver(Driver):
         t = event.get("type")
         cmds = []
         try:
-            if t == "click":
-                cmds = self._click_cmds(event)
-            elif t == "reminder":
+            if t == "reminder":
                 kind = event.get("kind") if event.get("kind") in REMINDER_LINES else "drink"
                 cmds = [
                     bus.SetState("eat" if kind == "drink" else "sleep"),
@@ -130,22 +126,10 @@ class RuleDriver(Driver):
                 if leveled_up:
                     cmds.append(bus.Hop())
             elif t == "idle":
-                cmds = [bus.Say(random.choice(CLICK_LINES), seconds=5)]
+                # 闲聊台词源：原挂在已退役的 CLICK_LINES 上，现改用闲聊池
+                cmds = [bus.Say(random.choice(IDLE_HOP_LINES), seconds=5)]
             else:
                 cmds = [bus.Hop()]
         except Exception:
             cmds = [bus.Hop()]
         return cmds
-
-    def _click_cmds(self, event: dict) -> list:
-        """点击分支：带 away_seconds 时升级成回归彩蛋，否则原随机池。"""
-        away = event.get("away_seconds")
-        if not isinstance(away, (int, float)) or away <= 0:
-            return [bus.Say(random.choice(CLICK_LINES)), bus.Hop()]
-        if away >= AWAY_LOST_SECONDS:      # 「离家出走」档：惊讶 + 兴师问罪
-            return [bus.SetState("shock"),
-                    bus.Say(random.choice(AWAY_LOST_LINES))]
-        if away >= AWAY_SLACK_SECONDS:     # 摸鱼档：笑哭 + 嘲讽
-            return [bus.SetState("laugh"),
-                    bus.Say(random.choice(AWAY_SLACK_LINES))]
-        return [bus.Say(random.choice(CLICK_LINES)), bus.Hop()]

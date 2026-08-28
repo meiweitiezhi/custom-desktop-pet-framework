@@ -62,12 +62,15 @@ class TestBus(unittest.TestCase):
 
 
 class TestRuleDriver(unittest.TestCase):
-    def test_click_always_replies(self):
+    def test_click_no_longer_replies_random_lines(self):
+        # 单击已由宿主专属接管：规则脑对 click 不再接话，只落未知事件兜底
         d = RuleDriver()
         for _ in range(20):
             cmds = d.react({"type": "click"})
             self.assertTrue(cmds)
-            self.assertTrue(any(isinstance(c, bus.Say) for c in cmds))
+            self.assertFalse(any(isinstance(c, bus.Say) for c in cmds),
+                             "click 不许再冒随机台词")
+            self.assertTrue(any(isinstance(c, bus.Hop) for c in cmds))
 
     def test_hook_maps_state(self):
         d = RuleDriver()
@@ -121,7 +124,7 @@ class TestLLMDriver(unittest.TestCase):
 
     def test_missing_config_reports_need_api(self):
         d = self._driver(api_base="", api_key="", model="")
-        cmds = d.react({"type": "click"})
+        cmds = d.react({"type": "hook", "event": "praise"})
         says = [c.text for c in cmds if isinstance(c, bus.Say)]
         self.assertTrue(any("需要接入自己的api" in t for t in says))
         # 同时规则脑兜底命令还在 —— 离线也能玩
@@ -133,7 +136,7 @@ class TestLLMDriver(unittest.TestCase):
             raise OSError("connection refused")
         d = self._driver()
         d._call_api = boom
-        cmds = d.react({"type": "click"})
+        cmds = d.react({"type": "hook", "event": "praise"})
         says = [c.text for c in cmds if isinstance(c, bus.Say)]
         self.assertTrue(any("需要接入自己的api" in t for t in says))
 
@@ -142,9 +145,9 @@ class TestLLMDriver(unittest.TestCase):
             raise OSError("down")
         d = self._driver()
         d._call_api = boom
-        n_notices_first = sum(1 for c in d.react({"type": "click"})
+        n_notices_first = sum(1 for c in d.react({"type": "hook", "event": "praise"})
                               if isinstance(c, bus.Say) and "需要接入" in c.text)
-        n_notices_second = sum(1 for c in d.react({"type": "click"})
+        n_notices_second = sum(1 for c in d.react({"type": "hook", "event": "praise"})
                                if isinstance(c, bus.Say) and "需要接入" in c.text)
         self.assertEqual(n_notices_first, 1)
         self.assertEqual(n_notices_second, 0)  # 冷却期内不重复
@@ -352,7 +355,6 @@ HOOK_ERROR_POOL = ["呜哇——又挂了…",
                    "哇的一声哭出来"]
 FLOURISH_DOOM_POOL = ["让我在这顶帽子里反省一下人生",
                       "世界暂时与我无关，勿cue"]
-PRAISE_POOL = ["嘿嘿…被夸得好开心嘛", "mua！收下我的小心心！"]
 
 
 class TestStatesExpansion(unittest.TestCase):
@@ -411,15 +413,27 @@ class TestRuleTriggerMatrix(unittest.TestCase):
         self.assertEqual(self._says(cmds),
                          ["三十年河东 三十年河西！这不就翻盘了！"])
 
-    def test_click_three_tiers_unchanged(self):
+    def test_click_taken_over_by_host_falls_through(self):
+        # 规则脑的 click 三档已退役：一律未知事件兜底（Hop），不切表情不说话
         d = RuleDriver()
-        self.assertEqual(self._states(d.react({"type": "click"})), [])
-        self.assertEqual(self._states(
-            d.react({"type": "click", "away_seconds": 700})), ["shock"])
-        self.assertEqual(self._states(
-            d.react({"type": "click", "away_seconds": 200})), ["laugh"])
-        self.assertEqual(self._states(
-            d.react({"type": "click", "away_seconds": 30})), [])
+        for ev in ({"type": "click"},
+                   {"type": "click", "away_seconds": 700},
+                   {"type": "click", "away_seconds": 200},
+                   {"type": "click", "away_seconds": 30}):
+            cmds = d.react(ev)
+            self.assertEqual(self._states(cmds), [], f"ev={ev}")
+            self.assertEqual(self._says(cmds), [], f"ev={ev}")
+
+    def test_idle_chat_still_talks(self):
+        # 闲聊台词源从已退役的 CLICK_LINES 挪到 IDLE_HOP_LINES，行为不哑
+        from petfw.drivers.rule import IDLE_HOP_LINES
+        d = RuleDriver()
+        says = []
+        for _ in range(10):
+            says += self._says(d.react({"type": "idle", "seconds": 120}))
+        self.assertTrue(says)
+        for t in says:
+            self.assertIn(t, IDLE_HOP_LINES)
 
     def test_alien_blushmax_lines_reserved_without_auto_trigger(self):
         from petfw.drivers import rule as rule_mod
@@ -463,12 +477,15 @@ class TestBridgeNewEvents(unittest.TestCase):
         self.assertEqual(self._drive_via_bridge("kiss"), ["love"])
 
     def test_praise_pool_is_shared_by_praise_and_kiss(self):
+        # 台词池已迁移为 rule.PRAISE_LINES（原 CLICK_LINES 池 + 原两句），
+        # praise 与 kiss 共用同一池
+        from petfw.drivers.rule import PRAISE_LINES
         d = RuleDriver()
         for ev in ("praise", "kiss"):
             for _ in range(20):
                 says = [c.text for c in d.react({"type": "hook", "event": ev})
                         if isinstance(c, bus.Say)]
-                self.assertTrue(says and set(says) <= set(PRAISE_POOL),
+                self.assertTrue(says and set(says) <= set(PRAISE_LINES),
                                 f"event={ev} says={says}")
 
 
@@ -510,12 +527,17 @@ class TestManifest(unittest.TestCase):
         return json.loads(path.read_text(encoding="utf-8"))["states"]
 
     def test_manifest_keys_match_bus_states(self):
-        # 双向弱包含代替强相等：允许两边分支各自先行扩展，合并后自然闭合
+        # 双向弱包含代替强相等：允许两边分支各自先行扩展，合并后自然闭合。
+        # 专属演出动作（alien_suck）只在 manifest 登记、不进 SetState 词表，
+        # 但必须在 host.ACTION_ONLY 里声明，防止 manifest 出现野名字。
+        from petfw.host import ACTION_ONLY
         core = set(getattr(bus, "CORE_STATES", ()))
         mk = set(self._manifest_states().keys())
         allst = set(bus.STATES)
         self.assertTrue(core <= mk)
-        self.assertTrue(mk <= allst)
+        self.assertTrue(mk <= allst | set(ACTION_ONLY))
+        self.assertEqual(set(ACTION_ONLY) - allst, mk - allst,
+                         "manifest 里的专属动作必须与 ACTION_ONLY 一一对应")
 
     def test_manifest_entries_have_animation_fields(self):
         for name, spec in self._manifest_states().items():

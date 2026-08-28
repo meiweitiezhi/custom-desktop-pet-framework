@@ -60,9 +60,9 @@ class _FakeWindow:
         self.quits += 1
 
 
-# 真实仓库现状：angry 无素材图缺席；其余十二态均已出图
+# 真实仓库现状：angry 无素材图缺席；其余十二态与专属动作 alien_suck 均已出图
 LOADED = ["idle", "cheer", "eat", "sleep", "laugh", "shock",
-          "dance", "cry", "hide", "love", "alien", "blushmax"]
+          "dance", "cry", "hide", "love", "alien", "blushmax", "alien_suck"]
 
 
 def _texts(menu: QMenu) -> list:
@@ -81,12 +81,19 @@ class TestActionsMenu(unittest.TestCase):
         for zh in ("发呆", "打气", "干饭", "睡觉", "笑哭", "惊讶", "扭舞"):
             self.assertIn(zh, texts)
         self.assertNotIn("生气", texts, "缺图状态绝不能出现在菜单里")
-        for zh in ("哭唧唧", "缩帽躲", "比小心心", "外星吸人", "羞耻爆炸"):
+        for zh in ("哭唧唧", "缩帽躲", "比小心心", "外星吸人", "羞耻爆炸",
+                   "UFO 吸入"):
             self.assertIn(zh, texts)
         # 三段分组之间要有分隔线，且构建菜单本身不许顺带触发任何动作
         seps = [a for a in self.menu.actions() if a.isSeparator()]
         self.assertGreaterEqual(len(seps), 2)
         self.assertEqual(self.win.played, [], "构建菜单本身不许触发动作")
+
+    def test_ufo_suck_triggers_play_action(self):
+        acts = {a.text(): a for a in self.menu.actions()
+                if not a.isSeparator()}
+        acts["UFO 吸入"].trigger()
+        self.assertEqual(self.win.played, ["alien_suck"])
 
     def test_system_group_reuses_window_slots(self):
         acts = {a.text(): a for a in self.menu.actions()
@@ -126,6 +133,19 @@ class TestManifestV3Fields(unittest.TestCase):
                              f"{name} 缺 play=once")
             self.assertEqual(spec.get("return_to", "idle"), "idle",
                              f"{name} 的 return_to 默认必须是 idle")
+
+    def test_alien_suck_entry_shape(self):
+        """专属吸入动作：39 帧 @33ms、once、回 idle、无尾部定格。"""
+        spec = self._states().get("alien_suck")
+        self.assertIsNotNone(spec, "manifest 缺 alien_suck 条目")
+        self.assertEqual(len(spec["frames"]), 26 + 13)
+        self.assertEqual(spec["frame_ms"], 33)
+        self.assertEqual(spec["play"], "once")
+        self.assertEqual(spec.get("hold_tail_ms", 0), 0)
+        self.assertEqual(spec.get("return_to", "idle"), "idle")
+        # 帧文件名规约：states/alien_suck_F{idx:03d}.png 且首尾都在 frames 里
+        self.assertEqual(spec["frames"][0], "states/alien_suck_F000.png")
+        self.assertEqual(spec["frames"][-1], "states/alien_suck_F038.png")
 
     def test_idle_calm_and_angry_untouched(self):
         states = self._states()

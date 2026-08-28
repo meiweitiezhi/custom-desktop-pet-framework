@@ -27,6 +27,8 @@ from . import paths
 from .action_player import ActionPlayer
 from .animator_core import DEFAULT_FRAME_MS
 from .bridge import BridgeServer
+from .click_flow import (DOUBLE_CLICK_MS, ClickResolver, resolve_click_sfx,
+                         should_perform)
 from .drivers import get_driver
 from .extensions.growth import GrowthTracker, level_for
 from .streaks import BuildStreak
@@ -64,7 +66,16 @@ STATE_ZH = {
 # 只渲染 self.states 里已加载出图的状态，缺图自动缺席隐藏。
 MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
                 "laugh", "shock", "angry", "dance")
-MENU_FUN = ("cry", "hide", "love", "alien", "blushmax")
+MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
+
+# 专属演出动作：只在 manifest 登记与动作菜单出现，不进 bus.STATES 词表
+# （不是表情状态，SetState 不认；演出一律走 play_action 点播）。
+ACTION_ONLY = ("alien_suck",)
+ACTION_ZH = {"alien_suck": "UFO 吸入"}
+
+# 左键单击专属演出参数：固定句、hide 尾部定格时长（宿主接管，不走驱动）
+CLICK_TEASE = "不要戳我！！！！"
+HIDE_HOLD_TAIL_MS = 1500
 
 
 def defer_if_playing(pending, playing, wanted):
@@ -252,6 +263,13 @@ class PetWindow(QWidget):
         self._press_global = None
         self._press_win_pos = None
         self._dragged = False
+        # 左键单/双击判定：280ms 窗口纯逻辑在 click_flow，宿主只搬运 QTimer
+        self._clicks = ClickResolver()
+        self._click_timer = QTimer(self)
+        self._click_timer.setSingleShot(True)
+        self._click_timer.timeout.connect(self._on_click_window_timeout)
+        self._skip_next_release = False   # 双击自带的第二次 release 要跳过
+        self._click_sfx_eff = None        # click.wav 专属实例（独立于合成节流）
 
         # 渲染循环
         self.anim_timer = QTimer(self)
@@ -349,11 +367,14 @@ class PetWindow(QWidget):
         self.phase = 0.0
 
     # ---------------- 动作点播（ActionPlayer 接管换帧）----------------
-    def play_action(self, name: str, play: str | None = None) -> bool:
+    def play_action(self, name: str, play: str | None = None,
+                    hold_tail_ms: int | None = None) -> bool:
         """点播一段完整动作：记住来路 -> 播放器接管换帧 -> 谢幕自动回归。
 
         play 缺省读 manifest 的 v3 字段（play=once 完整播放一轮）；
         结算画面等需要持续演出的场合显式传 play="loop"。
+        hold_tail_ms：once 尾部定格毫秒数；None 时回落 manifest 条目的
+        hold_tail_ms 字段（如单击 hide 演出传 1500 定格再回 idle）。
         无帧的单图状态退化为直接切换（安静待机语义），不进场表演。
         """
         spec = self.states.get(name)
@@ -370,7 +391,8 @@ class PetWindow(QWidget):
         finish_target = next((s for s in wants if s in self.states), "idle")
         self.set_state(name)           # 先渲染首帧，呼吸相位同步归零
         player = ActionPlayer()
-        player.start(dict(spec, play=mode), on_finish_state=finish_target)
+        player.start(dict(spec, play=mode), on_finish_state=finish_target,
+                     hold_tail_ms=hold_tail_ms or 0)
         self.action = player
         return True
 
@@ -467,13 +489,78 @@ class PetWindow(QWidget):
         was_drag = self._dragged
         self._press_global = None
         self._dragged = False
-        # 先算离开时长再刷新活动时刻：上次交互到现在就是“小主人走开多久”
-        away_seconds = max(0, int(time.monotonic() - self.last_activity))
         self.last_activity = time.monotonic()
         self._save_position()
-        if left and not was_drag:
+        if not left or was_drag:
+            return
+        if self._skip_next_release:
+            # 这是双击事件自带的第二次 release：不许再开新判定窗口
+            self._skip_next_release = False
+            return
+        if self._clicks.press() == "pending":
+            # 第一击：挂起 280ms 单发定时器等第二击；等到就进双击事件
+            self._click_timer.start(DOUBLE_CLICK_MS)
+
+    def mouseDoubleClickEvent(self, e):
+        if e.button() != Qt.LeftButton:
+            return
+        # 双击成交：取消挂起的单击，放外星吸入全套
+        self._clicks.cancel()
+        self._click_timer.stop()
+        self._skip_next_release = True
+        self.last_activity = time.monotonic()
+        self._perform_double_click()
+
+    def _on_click_window_timeout(self):
+        """280ms 到点仍只有一击：裁决为单击专属演出。"""
+        if self._clicks.timeout() == "single":
+            self._perform_single_click()
+
+    # ---------------- 左键单/双击专属演出（宿主接管，不再 dispatch 驱动）----------------
+    def _perform_single_click(self):
+        """单击：固定句气泡 + click.wav 专属音效 + hide 演出尾部定格 1.5 秒。
+
+        hide 序列尾部本就融向 idle，加 1500ms 末帧定格再自然回归，
+        衔接连贯、毫无重播/重启感。
+        """
+        if not should_perform(self.settlement_open):
+            return
+        self.apply([bus.Say(CLICK_TEASE)])
+        self._play_click_sfx()
+        self.play_action("hide", hold_tail_ms=HIDE_HOLD_TAIL_MS)
+
+    def _perform_double_click(self):
+        """双击：合成 suck 音效 + alien_suck 全套（升空吸入 + 空场留白）。"""
+        if not should_perform(self.settlement_open):
+            return
+        self.play("suck")
+        self.play_action("alien_suck")
+
+    def _play_click_sfx(self):
+        """播 [sound] click_sfx 指向的本地 wav（独立 QSoundEffect 实例）。
+
+        与 suck/pop 等合成音效的 0.18s 节流互不影响；未配置、文件缺失、
+        无声环境、缺多媒体后端一律静默，回落内置合成 pop。
+        """
+        if not self._sound_enabled:
+            return
+        path = resolve_click_sfx(
+            self.cp.get("sound", "click_sfx", fallback=""), paths.APP_DIR)
+        if path is None:
             self.play("pop")
-            self.dispatch({"type": "click", "away_seconds": away_seconds})
+            return
+        try:
+            from PySide6.QtCore import QUrl
+            from PySide6.QtMultimedia import QSoundEffect
+            eff = self._click_sfx_eff
+            if eff is None:
+                eff = QSoundEffect(self)
+                eff.setSource(QUrl.fromLocalFile(path))
+                self._click_sfx_eff = eff
+            eff.setVolume(self._sound_volume)
+            eff.play()
+        except Exception:
+            self.play("pop")   # 后端失败：回落合成 pop，最多无声不会炸
 
     # ---------------- 事件分发（harness 核心）----------------
     def set_driver(self, mode: str, remember: bool = True):
@@ -498,9 +585,7 @@ class PetWindow(QWidget):
             self.scan_growth()
             return
         if self.mode == "llm":
-            # UI 不等网络：点击先蹦一下，台词回来再上屏
-            if ev.get("type") == "click":
-                self.apply([bus.Hop()])
+            # UI 不等网络：事件先下发后台问大脑，台词回来再上屏
             threading.Thread(target=self._llm_run, args=(ev,),
                              daemon=True, name="petfw-brain").start()
         else:
@@ -621,17 +706,21 @@ class PetWindow(QWidget):
             head = menu.addAction(text)
             head.setEnabled(False)      # 分组标题只当看板，不可点
 
+        def _label(st):
+            # 表情状态用 STATE_ZH；专属演出动作（alien_suck）用 ACTION_ZH
+            return STATE_ZH.get(st) or ACTION_ZH.get(st) or st
+
         # —— 情绪组：八正态直呼其字（缺图的如生气自动缺席隐藏）——
         _header("情绪")
         for st in MENU_EMOTION:
             if st in window.states:
-                menu.addAction(STATE_ZH[st], lambda s=st: window.play_action(s))
+                menu.addAction(_label(st), lambda s=st: window.play_action(s))
         menu.addSeparator()
         # —— 整活组 ——
         _header("整活")
         for st in MENU_FUN:
             if st in window.states:
-                menu.addAction(STATE_ZH[st], lambda s=st: window.play_action(s))
+                menu.addAction(_label(st), lambda s=st: window.play_action(s))
         menu.addSeparator()
         # —— 系统组：复用宿主既有槽方法，绝不复制逻辑 ——
         _header("系统")
