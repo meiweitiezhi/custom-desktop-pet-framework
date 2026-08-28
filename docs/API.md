@@ -31,6 +31,7 @@ hook桥接 ┘                     失败自动降级↑
 |---|---|---|
 | pet | name | 宠物名字，显示在气泡/托盘 |
 | pet | display_size | 显示尺寸上限(px)，默认 128 |
+| pet | tick_ms | 渲染节拍（毫秒/帧），缺省 33 = 30fps 载波；合法 16~100，省电可改 66 |
 | brain | mode | `rule` / `llm`；三要素不全时自动回落 `rule` |
 | brain | api_base | OpenAI 兼容网关地址(**填什么看 docs_local/**) |
 | brain | api_key | 密钥，只存本地 |
@@ -255,7 +256,10 @@ manifest 与词表的防漂移单测只约束两条：核心四态必须已登�
 `bake_all_smooth()` 插帧烘焙管线再把 ≤8 帧的多帧状态丝滑化：相邻帧
 blend 渐变 + 末尾融回 idle 收招，输出 `<状态>_S{idx:03d}.png`（大写 S）
 并合并 frames/frame_ms/pingpong 进 manifest（eat/sleep 走 140ms 慢速档，
-dance 等全帧档跳过）。
+dance 等全帧档跳过）。`bake_all_smooth_v2()` 则在循环时长不变（±5%）的
+前提下把多帧状态加密到 30fps 载波（frame_ms=33）：从 source_frames 指向的
+原始 `_f` 姿态源重烘（绝不拿插帧帧再插帧），输出 `<状态>_D{idx:03d}.png`
+并写回 source_frames/source_loop_ms 源头标记，重跑幂等字节一致。
 
 ## 8. 动作菜单（本体右键 = 托盘，共用一份清单）
 

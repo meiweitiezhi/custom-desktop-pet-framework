@@ -14,6 +14,8 @@ TEMPLATE = """\
 [pet]
 name = 团子
 display_size = 128
+# 渲染节拍（毫秒/帧）：缺省 33 = 30fps 载波（配合 30fps 密度烘焙最丝滑）；省电可改 66
+tick_ms = 33
 
 [brain]
 # rule = 本地规则大脑（离线可用）；llm = 调大模型说话 + 决定表情

@@ -19,6 +19,12 @@
 PIL.Image.blend 插出渐变帧，末尾融回 idle 收招，输出 <状态>_S{idx:03d}.png
 并把新 frames/frame_ms/pingpong 合并进 manifest；eat/sleep 走特别慢速档。
 dance 等 61 帧全帧档天生丝滑，明确跳过。
+
+30fps 密度烘焙管线（v2）：bake_all_smooth_v2 循环时长严格不变（±5%），
+只把姿态密度加密到 30fps 载波（frame_ms=33）——k 帧渐变由旧循环时长反推，
+输出 <状态>_D{idx:03d}.png，并在 manifest 写 source_frames/source_loop_ms
+标记烘焙源头；重烘焙永远从 source_frames 指向的原始 _f 姿态源出发，
+绝不拿 _S/_D 插帧帧再插帧（防糊成鬼影叠影）。
 """
 import json
 import math
@@ -305,6 +311,165 @@ def bake_all_smooth(manifest_path: Path = MANIFEST, states_dir: Path = OUT,
                   f"{'（慢速档）' if slow else ''}")
         except Exception as exc:
             print(f"[烘焙] {name}: 跳过（{exc}）")
+    if patch:
+        merge_manifest_entries(patch, manifest_path)
+    return patch
+
+
+# ---------------------------------------------------------------- 30fps 密度烘焙管线（v2）
+# 目标载波：30fps —— frame_ms 固定 33ms，循环时长不变、只加密姿态密度
+TARGET_FPS = 30
+V2_FRAME_MS = int(round(1000 / TARGET_FPS))          # = 33
+# v2 产物命名标签：大写 D 与旧 _f（原始姿态）/_S（v1 插帧）/_F（全帧）区分
+SMOOTH_TAG_V2 = "D"
+# 收招余韵固定 2 帧（沿用 v1 参数：末帧与 idle 50% 融合 1 帧 + idle 定格 1 帧）
+V2_TAIL_FRAMES = 2
+
+
+def v2_transitions(old_loop_ms, source_count, tail: int = V2_TAIL_FRAMES) -> int:
+    """反推相邻源帧之间要插的渐变帧数 k（整数化，下限 2）。
+
+    预算：目标总帧数 = 旧循环时长(ms) / 1000 * TARGET_FPS；扣除 source_count
+    个源帧与 tail 帧收招余韵后，均摊到 (source_count-1) 个段间四舍五入。
+    保证 新序列帧数 x 33ms ≈ 旧循环时长 ±5% —— 时长不变，只提高密度。
+    垃圾 old_loop_ms / 源帧不足 2 时一律回落 k=2。
+    """
+    n = int(source_count)
+    if n < 2:
+        return 2
+    try:
+        budget = float(old_loop_ms) / 1000.0 * TARGET_FPS - n - tail
+    except (TypeError, ValueError):
+        return 2
+    return max(2, int(round(budget / (n - 1))))
+
+
+def find_pose_sources(states_dir, name: str) -> list | None:
+    """从磁盘找 <name>_f{i}.png 原始姿态源（从 0 连续编号）。
+
+    这是旧 v1 插帧条目唯一的合法重烘源头；不足 2 帧返回 None。
+    """
+    rels, i = [], 0
+    while (Path(states_dir) / f"{name}_f{i}.png").exists():
+        rels.append(f"states/{name}_f{i}.png")
+        i += 1
+    return rels if len(rels) >= 2 else None
+
+
+def resolve_bake_sources_v2(name: str, entry, states_dir) -> list | None:
+    """解析一个状态的 v2 烘焙源（原始姿态 rel 路径列表）；不可烘返回 None。
+
+    优先级：
+    1. entry["source_frames"]（上一轮 v2 写下的源头标记）——幂等重跑；
+    2. entry["frames"] 本身 <=8 帧（新鲜 GIF 抽稀 _f 档）——它就是源；
+    3. frames 是旧插帧产物（_S/_D 系列）——回退磁盘原始 _f 姿态源，
+       绝不拿插帧帧再插帧；
+    其余（dance 等 _F 全帧档、帧数超限）明确不管。
+    """
+    declared = entry.get("source_frames")
+    if isinstance(declared, (list, tuple)) and len(declared) >= 2:
+        return [str(s).replace("\\", "/") for s in declared]
+    frames = [str(f).replace("\\", "/") for f in entry.get("frames") or []]
+    n = len(frames)
+    if 0 < n <= SMOOTH_MAX_SOURCE_FRAMES:
+        return frames
+    tags = {Path(f).stem.rsplit("_", 1)[-1][:1] for f in frames}
+    if n > SMOOTH_MAX_SOURCE_FRAMES and tags <= {"S", "D"}:
+        return find_pose_sources(states_dir, name)
+    return None
+
+
+def bake_smooth_v2(state_entry, source_frames: list, states_dir,
+                   old_loop_ms, tail_to=None) -> dict:
+    """30fps 密度烘焙：循环时长严格不变，只把姿态密度加密到 30fps 载波。
+
+    1. source_frames 必须是原始姿态的 rel 路径列表（_f 系列），逐张读入；
+    2. k = v2_transitions(old_loop_ms, 帧数)，相邻源帧间插 k 张渐变帧；
+    3. tail_to 给了 idle 图时末尾追加 2 帧收招余韵（50% 融合 + idle 定格，
+       沿用 v1 参数）；
+    4. 新帧逐张存 <state>_D{idx:03d}.png；
+    5. 返回 manifest 片段：frames / frame_ms=33 / pingpong=True / play=once /
+       return_to=idle / source_frames（标记烘焙源头，防二次插帧）/
+       source_loop_ms（固定旧循环时长，保证幂等重跑 k 不漂移）。
+    """
+    src_rels = [str(s).replace("\\", "/") for s in source_frames or ()]
+    if len(src_rels) < 2:
+        raise ValueError("烘焙源至少要 2 帧原始姿态，拒绝插帧帧再插帧")
+    src = [Image.open(Path(states_dir) / Path(rel).name).convert("RGBA")
+           for rel in src_rels]
+    k = v2_transitions(old_loop_ms, len(src))
+    seq = [src[0]]
+    for prev, nxt in zip(src, src[1:]):
+        seq.extend(interpolate(prev, nxt, k))
+        seq.append(nxt)
+    # 收招余韵（沿用 v1 参数）：末帧与 idle 50% 融合 1 帧 + idle 原图定格
+    if tail_to is not None:
+        idle = Image.open(tail_to).convert("RGBA")
+        last = seq[-1]
+        seq.extend(interpolate(last, idle, V2_TAIL_FRAMES - 1))
+        seq.append(idle.resize(last.size) if idle.size != last.size else idle)
+    states_dir = Path(states_dir)
+    states_dir.mkdir(parents=True, exist_ok=True)
+    stem = Path(str(state_entry.get("file") or "state")).stem
+    rels = []
+    for i, fr in enumerate(seq):
+        name = f"{stem}_{SMOOTH_TAG_V2}{i:03d}.png"
+        fr.save(states_dir / name)
+        rels.append(f"states/{name}")
+    try:
+        loop_ms = int(round(float(old_loop_ms)))
+    except (TypeError, ValueError):
+        loop_ms = len(seq) * V2_FRAME_MS
+    return {
+        "frames": rels,
+        "frame_ms": V2_FRAME_MS,
+        "pingpong": True,
+        "play": "once",
+        "return_to": "idle",
+        "source_frames": src_rels,
+        "source_loop_ms": loop_ms,
+    }
+
+
+def bake_all_smooth_v2(manifest_path: Path = MANIFEST, states_dir: Path = OUT,
+                       idle_img=None) -> dict:
+    """批量 30fps 密度烘焙并写回 manifest（幂等：重跑字节级一致）。
+
+    只处理能解析出原始姿态源（<=8 帧）的多帧状态；dance 等 _F 全帧档
+    （长度 >8 且非插帧产物）明确跳过。old_loop_ms 优先取上一轮写下的
+    source_loop_ms，否则按现条目 frames x frame_ms 结算——循环时长不变
+    原则自动保留 eat/sleep 的慢速语义。单状态素材缺失只警告跳过，
+    绝不拖垮整批。返回 {"状态名": 补丁片段}。
+    """
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    patch = {}
+    for name, entry in (data.get("states") or {}).items():
+        frames = entry.get("frames")
+        if not isinstance(frames, (list, tuple)) or not frames:
+            continue
+        sources = resolve_bake_sources_v2(name, entry, states_dir)
+        if not sources or len(sources) > SMOOTH_MAX_SOURCE_FRAMES:
+            print(f"[v2烘焙] {name}: 跳过（无 <=8 帧原始姿态源，全帧档不归 v2 管）")
+            continue
+        old_loop = entry.get("source_loop_ms")
+        if not isinstance(old_loop, (int, float)) or old_loop <= 0:
+            try:
+                old_loop = len(frames) * int(entry.get("frame_ms")
+                                             or DEFAULT_FRAME_MS)
+            except (TypeError, ValueError):
+                old_loop = len(frames) * DEFAULT_FRAME_MS
+        try:
+            patch[name] = bake_smooth_v2(entry, sources, states_dir,
+                                         old_loop, tail_to=idle_img)
+        except Exception as exc:
+            print(f"[v2烘焙] {name}: 跳过（{exc}）")
+            continue
+        frag = patch[name]
+        print(f"[v2烘焙] {name}: 源 {len(sources)} 帧 k="
+              f"{v2_transitions(old_loop, len(sources))} -> "
+              f"{len(frag['frames'])} 帧 x {frag['frame_ms']}ms="
+              f"{len(frag['frames']) * frag['frame_ms']}ms"
+              f"（旧循环 {int(old_loop)}ms）")
     if patch:
         merge_manifest_entries(patch, manifest_path)
     return patch

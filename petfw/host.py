@@ -6,6 +6,7 @@
 """
 import json
 import math
+import configparser
 import os
 import queue
 import sys
@@ -33,7 +34,20 @@ from .streaks import BuildStreak
 ASSETS = paths.ASSETS            # 只读素材（frozen 时在解包目录）
 RUNTIME_PATH = paths.RUNTIME_PATH  # 可写位置（frozen 时在 exe 旁边）
 
-TICK_MS = 66
+TICK_MS = 33          # 渲染节拍缺省 30fps 载波；实际由 [pet] tick_ms 决定
+TICK_MS_MIN, TICK_MS_MAX = 16, 100
+
+
+def resolve_tick_ms(cp) -> int:
+    """渲染节拍收编：config.ini [pet] tick_ms，缺省 33（30fps 载波）。
+
+    合法区间钳制 16~100（省电可改 66）；缺段/缺键/乱码一律回落缺省 33。
+    """
+    try:
+        value = int(str(cp.get("pet", "tick_ms", fallback="33")).strip())
+    except (configparser.Error, TypeError, ValueError):
+        return 33
+    return max(TICK_MS_MIN, min(TICK_MS_MAX, value))
 
 # hook 事件 -> 音效名（一条事件只挂一响，集中在这里，别处不再叠加）
 HOOK_SFX = {"error": "wah", "praise": "kiss", "kiss": "kiss"}
@@ -201,6 +215,8 @@ class PetWindow(QWidget):
         super().__init__(None, Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
                          | Qt.Tool)
         self.cp = cp
+        global TICK_MS
+        TICK_MS = resolve_tick_ms(cp)   # 渲染节拍可配置（30fps 载波，省电改 66）
         self.pet_name = cp.get("pet", "name", fallback="团子")
         display = int(cp.get("pet", "display_size", fallback="128"))
         self.states = load_states(display)
