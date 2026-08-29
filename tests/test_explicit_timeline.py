@@ -216,10 +216,10 @@ class TestManifestV4(unittest.TestCase):
             self.assertGreaterEqual(float(spec["hold_seconds"]), 0.0)
             self.assertIn("max_seconds", spec, f"{name} 必须显式声明保险丝上限")
             self.assertGreater(float(spec["max_seconds"]), 0.0)
-        # 主人拍板的定格现值：shock/cry 定格 1.2 秒，dance 不定格
+        # 主人拍板的定格现值：shock/cry 定格 1.2 秒，dance 压扁谢幕前 0.3 秒
         self.assertEqual(self.states["shock"]["hold_seconds"], 1.2)
         self.assertEqual(self.states["cry"]["hold_seconds"], 1.2)
-        self.assertEqual(self.states["dance"]["hold_seconds"], 0.0)
+        self.assertEqual(self.states["dance"]["hold_seconds"], 0.3)
 
     def test_frames_stripped_of_transition_and_legacy_refs(self):
         for name in ONCE_STATES:
@@ -232,32 +232,35 @@ class TestManifestV4(unittest.TestCase):
                                  f"{name} 的 frames 不得再混 _Q 转场帧")
                 self.assertFalse("_S" in stem,
                                  f"{name} 的 frames 不得回潮引用旧 _S 插帧")
-            # shock/cry 插帧档帧数锁死；dance 视频重建档帧数随源视频浮动
-            # （解码去重后不可预知），改真值驱动只锁下限与连续编号
-            expect = {"shock": 28, "cry": 28}
-            if name in expect:
-                self.assertEqual(len(spec["frames"]), expect[name],
-                                 f"{name} 表演段帧数必须恰为 {expect[name]}")
+            # shock/cry 插帧档帧数锁死；dance = GIF 扭舞档恰 8 帧 _G
+            if name in ("shock", "cry"):
+                self.assertEqual(len(spec["frames"]), 28,
+                                 f"{name} 表演段帧数必须恰为 28")
+                self.assertEqual(
+                    spec["frames"],
+                    [f"states/{name}_D{i:03d}.png" for i in range(28)],
+                    f"{name} 表演帧必须是本状态的连续编号帧")
             else:
-                self.assertGreater(len(spec["frames"]), 24,
-                                   f"{name} 全帧档必须多于 24 帧")
-            tag = "F" if name == "dance" else "D"
-            self.assertEqual(
-                spec["frames"],
-                [f"states/{name}_{tag}{i:03d}.png"
-                 for i in range(len(spec["frames"]))],
-                f"{name} 表演帧必须是本状态的连续编号帧")
+                self.assertEqual(len(spec["frames"]), 8,
+                                 "dance GIF 扭舞档必须恰 8 帧")
+                self.assertEqual(
+                    spec["frames"],
+                    [f"states/dance_G{i:02d}.png" for i in range(8)],
+                    "dance 表演帧必须是 8 张连续 _G 编号帧")
 
     def test_transition_frames_reference_real_files(self):
+        # 转场标签：shock/cry 通用压扁 _Q；dance 专用重烘 _T（gif 末帧起点）
+        trans_tag = {"shock": "Q", "cry": "Q", "dance": "T"}
         for name in ONCE_STATES:
             rels = self.states[name]["transition_frames"]
-            self.assertTrue(rels, f"{name} 必须有转场拼接帧（压扁回弹 _Q）")
+            self.assertTrue(rels, f"{name} 必须有转场拼接帧（压扁回弹）")
             for rel in rels:
                 p = STATES_DIR / pathlib.Path(rel).name
                 self.assertTrue(p.exists(), f"{name} 转场帧缺图: {rel}")
                 stem = pathlib.Path(rel).stem
-                self.assertTrue(stem.startswith(f"{name}_Q"),
-                                f"{name} 转场帧必须是 _Q 序列: {rel}")
+                self.assertTrue(stem.startswith(f"{name}_{trans_tag[name]}"),
+                                f"{name} 转场帧必须是 _{trans_tag[name]} 序列: "
+                                f"{rel}")
 
     def test_max_seconds_covers_timeline_plus_grace(self):
         for name in ONCE_STATES:

@@ -1,9 +1,8 @@
 """表演窗口（v5）：once 表演段支持 rounds 轮数 / perform_seconds 秒窗口。
 
-主人拍板：一轮太快看不清——shock 表演段演 2 轮（28 帧×2）；sleep/cry
+主人拍板：一轮太快看不清——shock 表演段演 2 轮（28 帧×2）；sleep/cry/dance
 表演段持续 5 秒（帧在窗口内取模循环，乒乓在窗口内连续往返不断轮），
-到点再走定格/转场谢幕。优先级 rounds > perform_seconds > 缺省一轮；
-不写新字段的旧状态（dance 等）一轮照旧。
+到点再走定格/转场谢幕。优先级 rounds > perform_seconds > 缺省一轮。
 全程纯逻辑 + manifest 真值，无 GUI 无网络。
 """
 import json
@@ -269,33 +268,38 @@ class TestManifestPerformWindow(unittest.TestCase):
         p.tick(1.2)
         self.assertEqual(p.segment, "transition", "定格完必须进转场")
 
-    def test_dance_without_window_fields_regression(self):
-        # 无新字段的旧状态回归不变：dance 一轮照旧、保险丝现值不动
+    def test_dance_gif_five_second_window_then_hold_transition(self):
+        # dance GIF 扭舞档（8 帧 @40ms）：点播表演窗口 5 秒取模循环约 15.6 圈
+        # -> 定格 0.3 秒 -> 8 张 _T 压扁转场谢幕；保险丝 6.62 显式锁值
         spec = self.states["dance"]
         self.assertNotIn("rounds", spec)
-        self.assertNotIn("perform_seconds", spec)
+        self.assertEqual(spec.get("perform_seconds"), 5.0,
+                         "dance 点播表演窗口必须持续 5 秒")
         p = self._player("dance")
         durs = {name: dur for name, dur in p.segments}
-        # dance 视频重建档：帧数随源视频浮动，一律读 manifest 真值折算
         ms = float(spec["frame_ms"]) / 1000.0
-        self.assertGreater(len(spec["frames"]), 24,
-                           "dance 全帧档必须多于 24 帧（真值驱动不锁死）")
-        self.assertAlmostEqual(durs["perform"], len(spec["frames"]) * ms,
-                               places=9,
-                               msg="dance 表演段必须照旧只播一轮")
-        self.assertNotIn("hold", durs,
-                         "dance 定格 0 秒：0 长段不许出现在时间线上")
+        self.assertAlmostEqual(durs["perform"], 5.0, places=9)
+        self.assertAlmostEqual(durs["hold"], 0.3, places=9)
         self.assertAlmostEqual(durs["transition"],
                                len(spec["transition_frames"]) * ms, places=9)
-        expected_max = round(len(spec["frames"]) * ms
+        expected_max = round(5.0 + 0.3
                              + len(spec["transition_frames"]) * ms + 1.0, 3)
         self.assertAlmostEqual(float(spec["max_seconds"]), expected_max,
                                places=9,
-                               msg="max_seconds 必须 = 表演+转场+1s 宽限")
+                               msg="max_seconds 必须 = 窗口+定格+转场+1s 宽限")
         self.assertAlmostEqual(p.total_s + 1.0,
                                float(spec["max_seconds"]), places=9)
-        p.tick(0.5)
-        self.assertEqual(p.segment, "perform", "0.5s 时仍在一轮表演段内")
+        self.assertEqual(p.tick(0.0), 0, "开场亮首帧")
+        idx = p.tick(4.95)
+        self.assertEqual(p.segment, "perform", "4.95s 仍在表演段窗口内")
+        self.assertTrue(0 <= idx < len(spec["frames"]),
+                        "窗口内帧下标取模循环，必须落在表演帧范围内")
+        p.tick(0.05)
+        self.assertEqual(p.segment, "hold", "5.0 秒整必须切进定格")
+        self.assertEqual(p.tick(0.0), len(spec["frames"]) - 1,
+                         "定格恒亮末帧（dance_G07）")
+        p.tick(0.3)
+        self.assertEqual(p.segment, "transition", "定格完必须进转场谢幕")
 
 
 if __name__ == "__main__":

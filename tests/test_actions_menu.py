@@ -139,8 +139,8 @@ class TestManifestV3Fields(unittest.TestCase):
 
     def test_multi_frame_states_play_once_and_return_to_idle(self):
         multi = {k: v for k, v in self._states().items() if v.get("frames")}
-        # 活动区带帧序列的恰为这六项（含 shock/cry/dance 的 _Q 压扁转场帧、
-        # transition-v2 起改为 45 帧常驻循环档的 cheer、六拍舞循环档 dance6）
+        # 活动区带帧序列的恰为这六项（含 shock/cry 的 _Q、dance 的 _T
+        # 压扁转场帧、45 帧常驻循环档的 cheer、六拍舞循环档 dance6）
         self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry",
                                       "cheer", "dance6"})
         for name, spec in multi.items():

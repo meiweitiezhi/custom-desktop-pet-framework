@@ -232,10 +232,10 @@ cmd /c "cd /d %PETFW_HOME% && python -m petfw.react edit"
 | play | `once` 完整播放一轮就谢幕 / `loop` 循环；缺省 `loop`（老条目零改动兼容） |
 | pingpong | `true` 时 loop 档乒乓往返走帧（到尾反向、回头正向），once 档忽略照旧播到尾；缺省不开 |
 | return_to | 谢幕后的建议去向，缺省 `idle`（宿主实际优先回到表演前来路） |
-| transition_frames | **v4** 转场拼接段：压扁回弹 `_Q` 帧序列，独立于 frames（once 收招仪式） |
-| hold_seconds | **v4** 定格段秒数：表演末帧的定格时长（0 = 不定格；shock/cry 1.2、dance 0.0） |
+| transition_frames | **v4** 转场拼接段：压扁回弹帧序列，独立于 frames（once 收招仪式；shock/cry 走 `_Q`，dance 走专用重烘 `_T`） |
+| hold_seconds | **v4** 定格段秒数：表演末帧的定格时长（0 = 不定格；shock/cry 1.2、dance 0.3） |
 | max_seconds | **v4** 保险丝上限秒数 = 表演+定格+转场 + 1 秒宽限，显式写进 manifest |
-| rounds / perform_seconds | **v5** 表演窗口（可选，优先级 rounds > perform_seconds > 缺省一轮）：once 表演段演满 N 轮或持续 N 秒（帧下标取模循环、乒乓照常生效），到点再走定格/转场谢幕（shock 2 轮、sleep/cry 5 秒） |
+| rounds / perform_seconds | **v5** 表演窗口（可选，优先级 rounds > perform_seconds > 缺省一轮）：once 表演段演满 N 轮或持续 N 秒（帧下标取模循环、乒乓照常生效），到点再走定格/转场谢幕（shock 2 轮、sleep/cry/dance 5 秒） |
 | bob_amp | 上下浮动幅度 px |
 | period_ms | 浮动周期，越小越欢快 |
 | tilt_deg | 摆动最大倾角 |

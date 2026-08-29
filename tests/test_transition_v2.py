@@ -252,8 +252,11 @@ class TestBakeSquashReturn(unittest.TestCase):
         # v4：frames 保持纯表演帧，转场帧独立成 transition_frames 字段
         self.assertEqual(len(data["shock"]["frames"]), 6)
         self.assertEqual(len(data["shock"]["transition_frames"]), 30)
+        # dance 已换 8 帧 GIF 扭舞档：通用重烤不再碰 dance（专用 _T 转场
+        # 归 bake_dance_gif_transition 管，5 秒表演窗口口径由它自己折算）
         self.assertEqual(len(data["dance"]["frames"]), 2)
-        self.assertEqual(len(data["dance"]["transition_frames"]), 24)
+        self.assertNotIn("transition_frames", data["dance"],
+                         "dance 转场不得再由通用压扁重烤生成")
         # v4 字段齐备：hold_seconds/max_seconds 显式写出
         self.assertEqual(data["shock"]["hold_seconds"], 0.0)
         self.assertEqual(data["shock"]["max_seconds"],

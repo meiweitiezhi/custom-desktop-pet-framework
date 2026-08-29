@@ -43,14 +43,25 @@ v4 起（显式三段拼接时间线）：转场帧不再追加进 frames 尾部
 transition_frames 字段，同时按条目折算 hold_seconds 定格秒数与
 max_seconds 秒表保险丝（表演+定格+转场+1 秒宽限）显式写进 manifest。
 
+dance GIF 扭舞档管线（v6，主人拍板 2026-08）：gif_to_state_frames 把
+用户提供的 8 帧 GIF 整批转成新舞表演帧——逐帧独立白底洪泛抠图 -> 全帧
+不透明联合包围盒统一裁剪（对齐防抖）-> 等比缩放到高 <=400，输出
+<状态>_G{idx:02d}.png，frame_ms 取 GIF 延迟中位数 clamp 30~120；
+bake_dance_gif_transition 以 gif 末帧为起点、idle.png 为终点重烘 8 张
+压扁回弹转场帧 <状态>_T{idx:03d}.png 写进 transition_frames，保险丝按
+表演窗口口径（perform_seconds+hold+转场+宽限）折算——dance 表演段开
+5 秒秒窗口（frames 取模循环约 15.6 圈）+ 定格 0.3 秒，点播一次扭足 5 秒。
+dance 转场就此脱离通用压扁批处理（SQUASH_TARGETS 只剩 shock/cry），
+伴舞循环 song_flow.dance_loop_spec 按 transition_frames 同名剔除照常兼容。
+
 打气派对管线（任务二）：bake_cheer_party 把单图 cheer 整活成 45 帧常驻
 搞笑循环（play=loop）——两快两慢 ±18° 挥旗（带小跳与挥臂弧线残影）→
 蓄力猛压 0.75 弹过冲 1.15 → 原地 12 帧粗转一圈 → 顶点定格 3 帧+三颗
 五角星爆开 → 落地回弹收招，输出 cheer_D{idx:03d}.png。
 
 一键重烤入口：rebuild_all_animation_assets 按序执行压扁回弹转场
-（shock/cry/dance）+ cheer 派对 + sleep 播放提速并写回 manifest；
-python prep_assets.py --rebuild 直跑（幂等，可反复执行）。
+（shock/cry；dance 转场归上面 v6 专用管线管）+ cheer 派对 + sleep 播放
+提速并写回 manifest；python prep_assets.py --rebuild 直跑（幂等，可反复执行）。
 """
 import json
 import math
@@ -190,6 +201,60 @@ def process_gif(path: Path, out_dir: Path = OUT,
     print(f"{path.name} {len(rels)}帧 -> 联合包围盒{box} "
           f"frame_ms={frame_ms}")
     return {"frames": rels, "frame_ms": int(frame_ms)}
+
+
+# ---------------------------------------------------------------- GIF 全帧状态管线（dance 扭舞档）
+# 帧图命名标签：大写 G 与旧 _f（抽稀）/_F（全帧视频）/_S/_D（插帧）区分
+GIF_STATE_TAG = "G"
+# 成品帧等比缩放的高度上限（桌宠画布口径），只缩不放
+GIF_TARGET_H = 400
+# GIF 帧时长的合法区间（毫秒）：中位延迟钳进该区间
+GIF_FRAME_MS_MIN, GIF_FRAME_MS_MAX = 30, 120
+
+
+def gif_to_state_frames(gif_path, states_dir, state_name: str,
+                        target_h: int = GIF_TARGET_H) -> dict:
+    """把一个白底 GIF 整批转成状态表演帧（dance 扭舞档专用，全帧不抽稀）。
+
+    1. Pillow 打开 GIF，读 n_frames 与每帧 delay（统一取中位数）；
+    2. 逐帧转 RGBA -> 每帧独立白底洪泛抠图（flood_clear_background，与
+       既有管线同容差同边界中位色假设）-> 收集所有帧不透明联合包围盒 ->
+       全帧统一裁剪到该包围盒（对齐防抖）-> 等比缩放到高度 <=target_h
+       （只缩不放过小的素材）；
+    3. 逐张存 <state_name>_G{idx:02d}.png（大写 G 标签，两位编号）；
+    4. 返回 manifest 片段 {"frames": [相对路径], "frame_ms": 中位延迟
+       clamp 30~120}。同样输入永远得到逐字节一致的输出（确定性）。
+    """
+    with Image.open(gif_path) as src:
+        total = int(getattr(src, "n_frames", 1))
+        mats, durations = [], []
+        for i in range(total):
+            src.seek(i)
+            durations.append(int(src.info.get("duration") or 0))
+            frame = src.convert("RGBA")
+            mats.append(frame if already_transparent(frame)
+                        else flood_clear_background(frame))
+    if not mats:
+        raise SystemExit(f"{Path(gif_path).name} 一帧都抽不出来")
+    box = union_bbox(mats) or (0, 0, mats[0].width, mats[0].height)
+    cropped = [m.crop(box) for m in mats]   # 统一画布：帧间绝不互相错位
+    bw, bh = cropped[0].size
+    if bh > target_h:
+        scale = target_h / float(bh)
+        nw, nh = max(1, int(round(bw * scale))), max(1, int(round(target_h)))
+        cropped = [c.resize((nw, nh), Image.BICUBIC) for c in cropped]
+    states_dir = Path(states_dir)
+    states_dir.mkdir(parents=True, exist_ok=True)
+    rels = []
+    for i, fr in enumerate(cropped):
+        name = f"{state_name}_{GIF_STATE_TAG}{i:02d}.png"
+        fr.save(states_dir / name)
+        rels.append(f"states/{name}")
+    ms = max(GIF_FRAME_MS_MIN,
+             min(GIF_FRAME_MS_MAX, median_frame_ms(durations)))
+    print(f"{Path(gif_path).name} {len(rels)}帧 -> 联合包围盒{box} -> 画布"
+          f"{cropped[0].size} frame_ms={ms}")
+    return {"frames": rels, "frame_ms": int(ms)}
 
 
 def merge_manifest_entries(entries: dict,
@@ -595,7 +660,10 @@ def extend_return_transition(states_dir, manifest_path, targets,
 # 转场帧命名标签：大写 Q 与旧 _f/_F/_S/_D/_T 区分；_T 与旧 _Q 都是历史遗留
 TRANSITION_TAG_V2 = "Q"
 LEGACY_TRANSITION_TAGS = ("T", TRANSITION_TAG_V2)
-SQUASH_TARGETS = ("shock", "cry", "dance")   # 主人拍板的三态
+# 通用压扁转场目标：shock/cry。dance 已换 8 帧 GIF 扭舞档，其转场归
+# 专用管线 bake_dance_gif_transition 管（表演窗口 5 秒口径自己折算），
+# 通用重烤绝不碰它——否则会把 8 张 _T 冲成整秒 _Q 且算错保险丝
+SQUASH_TARGETS = ("shock", "cry")
 SQUASH_SY_MIN = 0.78       # 第一幕终点：压到 78%（两图轮廓差异最小处）
 SQUASH_SX_MAX = 1.18       # 压扁同时横向鼓出，保体积
 SQUASH_OVERSHOOT = 1.12    # 第二幕过冲顶点（>1.08 可测）
@@ -642,7 +710,8 @@ def _squash_pose(im: Image.Image, sx: float, sy: float) -> Image.Image:
 
 
 def bake_squash_return(state_entry, states_dir, idle_img,
-                       total_frames: int = 30, name: str | None = None) -> dict:
+                       total_frames: int = 30, name: str | None = None,
+                       tag: str = TRANSITION_TAG_V2) -> dict:
     """压扁回弹转场：在最大压扁瞬间完成 A(表演末姿态)→B(idle) 姿态切换。
 
     三幕（total_frames 默认 30 @33ms ≈ 1 秒仪式）：
@@ -650,8 +719,9 @@ def bake_squash_return(state_entry, states_dir, idle_img,
     2. 恰在最大压扁帧无缝换装到 B 的同比例压扁帧——两图都压到 78% 时
        轮廓差异最小，切换无感、零叠影；
     3. 后 60% 帧数 ease_out_back 式从 0.78 经 1.12 过冲回弹落定为 B 原图。
-    幂等：先清该状态旧转场帧（_T 与 _Q 两代都清）再生成 _Q 序列；
+    幂等：先清该状态旧转场帧（_T 与 _Q 两代都清）再生成转场序列；
     frame_ms 沿用条目原值（dance 的 41ms 档传 total_frames=24 同样约 1 秒）。
+    tag 指定输出标签（缺省 _Q；dance GIF 扭舞档传 "T" 复用第一代标签）。
     v4 起（显式三段时间线）返回的补丁不再把转场帧追加进 frames，而是
     独立成 transition_frames 字段；hold_seconds 读条目（缺省 0.0），
     max_seconds = 表演+定格+转场 + 1 秒宽限，宿主秒表保险丝直接吃这个数。
@@ -698,12 +768,14 @@ def bake_squash_return(state_entry, states_dir, idle_img,
             b, SQUASH_SX_MAX + (1.0 - SQUASH_SX_MAX) * _back_ease(u, s_sx),
             SQUASH_SY_MIN + (1.0 - SQUASH_SY_MIN) * _back_ease(u, s_sy)))
     # 幂等清场：_T（渐变转场）与 _Q（上一轮压扁转场）两种历史命名都清
-    for tag in LEGACY_TRANSITION_TAGS:
-        for old in sorted(states_dir.glob(f"{stem}_{tag}[0-9][0-9][0-9].png")):
+    # （循环变量用 legacy，绝不遮蔽上面 tag 参数）
+    for legacy in LEGACY_TRANSITION_TAGS:
+        for old in sorted(states_dir.glob(
+                f"{stem}_{legacy}[0-9][0-9][0-9].png")):
             old.unlink()
     q_rels = []
     for i, fr in enumerate(seq):
-        fname = f"{stem}_{TRANSITION_TAG_V2}{i:03d}.png"
+        fname = f"{stem}_{tag}{i:03d}.png"
         fr.save(states_dir / fname)
         q_rels.append(f"states/{fname}")
     try:
@@ -769,6 +841,59 @@ def bake_all_squash_returns(states_dir: Path = OUT,
     if patch:
         merge_manifest_entries(patch, manifest_path)
     return {name: p["frames"] for name, p in patch.items()}
+
+
+# ---------------------------------------------------------------- dance GIF 扭舞档专用转场
+# dance 谢幕转场：8 张压扁回弹帧，复用第一代大写 T 标签（幂等清场本就
+# 覆盖 _T/_Q 两代），起点=gif 末帧（frames 的最后一张），终点=idle
+DANCE_GIF_NAME = "dance"
+DANCE_TRANSITION_FRAMES = 8
+DANCE_TRANSITION_TAG = "T"
+
+
+def bake_dance_gif_transition(states_dir: Path = OUT,
+                              manifest_path: Path = MANIFEST,
+                              total_frames: int = DANCE_TRANSITION_FRAMES
+                              ) -> dict | None:
+    """dance GIF 扭舞档专用压扁回弹转场（8 张 _T，表演窗口口径自洽）。
+
+    与通用 bake_all_squash_returns 的差别只在保险丝折算：dance 表演段
+    走 perform_seconds 秒窗口（不是帧数×节拍），所以 max_seconds 必须
+    按「窗口+定格+转场+1 秒宽限」重算——bake_squash_return 的缺省折算
+    （帧数口径）在这里会灾难性算小，本函数取回补丁后显式覆盖。
+    转场本体复用 bake_squash_return 三幕逻辑：起点=表演帧序列末张
+    （即 gif 末帧 dance_G07），在最大压扁瞬间换装 idle，过冲回弹落定。
+    幂等：清场生成全程确定性，重跑 manifest/帧图字节级一致。
+    返回 manifest 补丁片段；dance 条目缺失/没有帧时警告返回 None。
+    """
+    states_dir = Path(states_dir)
+    data = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+    entry = (data.get("states") or {}).get(DANCE_GIF_NAME)
+    if not isinstance(entry, dict) or not entry.get("frames"):
+        print(f"[dance转场] {DANCE_GIF_NAME}: 跳过（条目缺失/没有帧序列）")
+        return None
+    frag = bake_squash_return(entry, states_dir, states_dir / "idle.png",
+                              total_frames=total_frames,
+                              name=DANCE_GIF_NAME, tag=DANCE_TRANSITION_TAG)
+    ms = int(frag["frame_ms"])
+    try:
+        window_ms = int(round(float(entry.get("perform_seconds") or 0)
+                              * 1000))
+    except (TypeError, ValueError):
+        window_ms = 0
+    if window_ms <= 0:              # 没写窗口的条目回落帧数口径
+        window_ms = len(frag["frames"]) * ms
+    hold_ms = int(round(float(entry.get("hold_seconds") or 0) * 1000))
+    total_ms = window_ms + hold_ms + len(frag["transition_frames"]) * ms \
+        + MAX_SECONDS_GRACE_MS
+    frag["max_seconds"] = round(total_ms / 1000.0, 3)
+    merge_manifest_entries({DANCE_GIF_NAME: frag}, manifest_path)
+    print(f"[dance转场] {DANCE_GIF_NAME}: gif 末帧起点 + 独立转场 "
+          f"{len(frag['transition_frames'])} 张 _{DANCE_TRANSITION_TAG} 帧"
+          f" @ {ms}ms（窗口 {window_ms / 1000.0:g}s + 定格 "
+          f"{hold_ms / 1000.0:g}s，保险丝 max_seconds="
+          f"{frag['max_seconds']}）")
+    return frag
 
 
 # ---------------------------------------------------------------- 打气派对管线（cheer 常驻搞笑循环）
@@ -968,8 +1093,9 @@ def rebuild_all_animation_assets(manifest_path: Path = MANIFEST,
                                  idle_img=None) -> dict:
     """一键重烤全部程序合成动画资产并写回 manifest（幂等，可反复执行）。
 
-    按序执行：压扁回弹转场（shock/cry/dance，v4 起 frames 保持纯表演帧、
-    转场帧独立成 transition_frames 并折算 hold_seconds/max_seconds）→
+    按序执行：压扁回弹转场（shock/cry，v4 起 frames 保持纯表演帧、
+    转场帧独立成 transition_frames 并折算 hold_seconds/max_seconds；
+    dance 转场归 bake_dance_gif_transition 专用管线，这里绝不碰）→
     cheer 打气派对 45 帧循环 → sleep 播放提速（frame_ms→90，帧图不动）。
     全部产物从源帧确定性重建；主代理合并后即可在主仓一键重烤。
     """

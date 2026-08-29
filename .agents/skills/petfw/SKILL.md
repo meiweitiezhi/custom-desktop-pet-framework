@@ -104,10 +104,12 @@ dance 扭舞一段）；结算画面打开期间点击一律忽略、不触发�
 - **manifest 四代 schema 并存**：v1 `"file"` 单图照旧；v2 `"frames"`+
   `"frame_ms"` 多帧（GIF 抽稀 `_f{i}`）；v3 动作字段 `play`(once/loop,
   缺省 loop 向后兼容)+`return_to`(缺省 idle)；**v4 显式三段**——
-  `frames` 只放表演帧、`transition_frames` 独立转场帧（`_Q` 压扁回弹
-  序列）、`hold_seconds` 定格秒数（shock/cry 1.2、dance 0.0）、
-  `max_seconds`=表演+定格+转场+1 秒宽限。全帧视频档输出
-  `<状态>_F{index:03d}.png`（prep_assets 同名视频优先于 GIF）。
+  `frames` 只放表演帧、`transition_frames` 独立转场帧（shock/cry 走 `_Q`
+  压扁回弹、dance 专用 `_T` 8 帧 gif 末帧起点重烘）、`hold_seconds` 定格
+  秒数（shock/cry 1.2、dance 0.3）、`max_seconds`=表演+定格+转场+1 秒
+  宽限。全帧视频档输出 `<状态>_F{index:03d}.png`（prep_assets 同名视频
+  优先于 GIF）；dance 扭舞现为 8 帧 GIF 新舞档 `<状态>_G{idx:02d}.png`
+  （`gif_to_state_frames` 抠图对齐缩放，`perform_seconds` 5 秒窗口循环）。
 - **安静待机不轮播**：多帧表情平时静立首帧只呼吸浮动（idle bob_amp=2），
   换帧只在 `PetWindow.play_action(name)` 点播时发生——治"定格闪跳"。
 - **丝滑档烘焙与乒乓**：`prep_assets.bake_all_smooth()` 把 ≤8 帧的骨折档
