@@ -58,6 +58,11 @@ enabled = true
 volume = 0.6
 # 单击专属音效：填本地 wav 路径（放 assets/local/click.wav 之类），留空则用内置 pop
 click_sfx = assets/local/click.wav
+# 点歌整首（单击触发）：默认曲目 assets/local/bgm.mp3（本地私有、永不入库），
+# music_volume 只管这首歌的音量，与上面互动音效的 volume 互不影响；
+# 文件缺失或多媒体后端不可用时，单击回落「戳我」定格演出（全程静默不崩）。
+music_file = assets/local/bgm.mp3
+music_volume = 0.6
 """
 
 

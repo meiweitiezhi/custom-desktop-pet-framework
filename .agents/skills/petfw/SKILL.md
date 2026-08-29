@@ -38,10 +38,12 @@ Driver 两实现：rule(离线兜底)/llm(对话脑,失败降级并提示配置 
 
 音效零素材：`petfw/sound_core.py` 运行期用标准库合成八种短音效（WAV 落系统临时目录），
 宿主 `PetWindow.play()` 经 QSoundEffect 播放并全程静默降级，改声音手感只动 sound_core。
-左键单击/双击由宿主专属接管（判定纯逻辑在 `petfw/click_flow.py`，280ms 可注入时钟窗口）：
-单击=固定句「不要戳我！！！！」+ `[sound] click_sfx` 专属音效（缺省回落 pop）+ shock 演出
-尾部定格 1.2 秒再经转场帧回 idle，双击=点歌开跳（click.wav 原声 + dance 扭舞一段）；
-结算画面打开期间点击一律忽略、不触发任何演出。
+左键单击/双击由宿主专属接管（判定纯逻辑在 `petfw/click_flow.py`，280ms 可注入时钟窗口；
+点歌决策在 `petfw/song_flow.py`、整首播放薄封装在 `petfw/music_player.py`）：
+单击=点歌整首 `[sound] music_file`（默认 assets/local/bgm.mp3）+ dance 循环伴舞到歌完
+自动回发呆，歌播着时单击/双击一律忽略，mp3 缺失或后端坏回落「不要戳我！！！！」气泡 +
+click.wav + shock 尾部定格 1.2 秒再经转场帧回 idle；双击=点歌开跳（click.wav 原声 +
+dance 扭舞一段）；结算画面打开期间点击一律忽略、不触发任何演出（结算开屏会先停点歌 BGM）。
 （五态精简，主人拍板 2026-08：hide/alien_suck 等八条已入 manifest 顶层
 `_disabled_states` 禁用区——loader 只读 `states`、显式忽略下划线顶层键，
 条目搬回即恢复；旧演出代码一律注释保留不物理删除。）

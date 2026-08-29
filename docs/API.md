@@ -46,6 +46,7 @@ hook桥接 ┘                     失败自动降级↑
 | settlement | bgm_rate | BGM 变速倍率，默认 2.5；合法区间 0.5~4.0，越界/非法自动回落 1.0 原速 |
 | sound | enabled / volume | 互动音效开关与音量(0~1)：运行期程序合成 WAV 到系统临时目录，零素材文件，无声环境自动静默降级 |
 | sound | click_sfx | 单击专属音效的本地 wav 路径（放 assets/local/click.wav 之类）；留空回落内置合成 pop |
+| sound | music_file / music_volume | 点歌整首的默认曲目（assets/local/bgm.mp3）与它的音量(0~1)，与互动音效 volume 互不影响；文件缺失或后端不可用时单击回落「戳我」演出 |
 
 路径说明：开发态 `config.ini` / `runtime.json` 固定在仓库根；用 PyInstaller
 打包的 exe（frozen 模式）下二者生成在 **exe 同目录**（`Path(sys.executable).parent`），
@@ -57,7 +58,7 @@ hook桥接 ┘                     失败自动降级↑
 
 | type | 附加字段 | 触发者 |
 |---|---|---|
-| click | —（已退役，不再 dispatch 给驱动） | 左键单/双击由宿主专属接管：单击=固定句气泡+click_sfx 专属音效+shock 定格 1.2 秒（经转场帧融回 idle），双击=点歌开跳（click.wav 原声+dance 扭舞一段）；结算画面打开期间一律忽略 |
+| click | —（已退役，不再 dispatch 给驱动） | 左键单/双击由宿主专属接管：单击=点歌整首 assets/local/bgm.mp3 + dance 循环伴舞到歌完自动回发呆（歌播着时单击/双击一律忽略；mp3 缺失或后端坏回落「戳我」定格演出），双击=点歌开跳（click.wav 原声+dance 扭舞一段）；结算画面打开期间一律忽略，结算开屏会先停掉点歌 BGM |
 | reminder | kind=`drink`/`stretch` | 健康提醒定时器 |
 | idle | seconds=安静秒数 | 无操作 ≥100s 后的随机闲聊 |
 | hook | event, message?, flourish?, streak? | 外部程序经 HTTP 桥送入；宿主在 `_on_hook` 统一合并 BuildStreak 的连败/翻盘判定（doom=连败3起、comeback=连败≥2后取胜） |

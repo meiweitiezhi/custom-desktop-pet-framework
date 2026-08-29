@@ -31,6 +31,8 @@ from .click_flow import (DOUBLE_CLICK_MS, ClickResolver, resolve_click_sfx,
                          should_perform)
 from .drivers import get_driver
 from .extensions.growth import GrowthTracker, level_for
+from .music_player import MusicPlayer, resolve_music
+from .song_flow import dance_loop_spec, should_ignore_click
 from .streaks import BuildStreak
 
 ASSETS = paths.ASSETS            # 只读素材（frozen 时在解包目录）
@@ -349,6 +351,20 @@ class PetWindow(QWidget):
         self._sound_volume = max(0.0, min(1.0, volume))
         self._last_sfx_at = 0.0             # 礼貌节流用：上一响的时刻
 
+        # 点歌整首（单击触发）：QMediaPlayer 薄封装；曲目与音量来自
+        # [sound]，文件缺失或多媒体后端不可用时单击回落「戳我」演出，
+        # 全程静默不崩。相对路径先 exe/仓库根、后解包目录（frozen 兜底）。
+        self.music = MusicPlayer(self)
+        try:
+            music_vol = float(cp.get("sound", "music_volume",
+                                     fallback="0.6"))
+        except ValueError:
+            music_vol = 0.6
+        self._music_volume = max(0.0, min(1.0, music_vol))
+        self._music_path = resolve_music(
+            cp.get("sound", "music_file", fallback=""),
+            (paths.APP_DIR, paths.BUNDLE_DIR))
+
         # 无聊闲聊
         self.idle_timer = QTimer(self)
         self.idle_timer.setSingleShot(True)
@@ -423,35 +439,39 @@ class PetWindow(QWidget):
 
     # ---------------- 动作点播（ActionPlayer 接管换帧）----------------
     def play_action(self, name: str, play: str | None = None,
-                    hold_tail_ms: int | None = None) -> bool:
+                    hold_tail_ms: int | None = None,
+                    spec: dict | None = None) -> bool:
         """点播一段完整动作：记住来路 -> 播放器接管换帧 -> 谢幕自动回归。
 
         play 缺省读 manifest 的 v4 字段（play=once 完整播放一轮）；
         结算画面等需要持续演出的场合显式传 play="loop"。
         hold_tail_ms：once 定格段毫秒数；None 时回落 manifest 的
         hold_seconds 字段（如单击 shock 演出传 1200，与 manifest 现值同源）。
+        spec：可选的条目覆盖（点歌伴舞传 song_flow.dance_loop_spec 的
+        循环规格）；缺省照旧读 self.states[name]。
         无帧的单图状态退化为直接切换（安静待机语义），不进场表演。
         """
-        spec = self.states.get(name)
-        if not spec:
+        entry = spec if isinstance(spec, dict) and spec \
+            else self.states.get(name)
+        if not entry:
             return False
-        if not spec.get("frames"):
+        if not entry.get("frames"):
             self.set_state(name)
             return True
         base = self._action_prev if self.action is not None else self.current
         if self._action_prev is None:
             self._action_prev = base   # 加播不覆盖来路：谢幕仍回最初的
-        mode = (play or str(spec.get("play") or "loop")).lower()
-        wants = [base, str(spec.get("return_to") or "idle"), "idle"]
+        mode = (play or str(entry.get("play") or "loop")).lower()
+        wants = [base, str(entry.get("return_to") or "idle"), "idle"]
         finish_target = next((s for s in wants if s in self.states), "idle")
         self.set_state(name)           # 先渲染首帧，呼吸相位同步归零
         player = ActionPlayer()
-        player.start(dict(spec, play=mode), on_finish_state=finish_target,
+        player.start(dict(entry, play=mode), on_finish_state=finish_target,
                      hold_tail_ms=hold_tail_ms or 0)
         self.action = player
         # 独立秒表保险丝上弦：与 ActionPlayer 内部计时互不相干，双保险
         try:
-            max_s = float(spec.get("max_seconds") or 0)
+            max_s = float(entry.get("max_seconds") or 0)
         except (TypeError, ValueError):
             max_s = 0.0
         self._action_started = time.monotonic()
@@ -597,27 +617,59 @@ class PetWindow(QWidget):
 
     # ---------------- 左键单/双击专属演出（宿主接管，不再 dispatch 驱动）----------------
     def _perform_single_click(self):
-        """单击：固定句气泡 + click.wav 专属音效 + shock 演出尾部定格 1.2 秒。
+        """单击=点歌：整首播放 bgm.mp3 + dance 循环伴舞到歌完，歌完回发呆。
 
-        五态精简后单击改演 shock（hide 已入禁用区）；shock 序列尾部经
-        转场补帧融向 idle，加 1200ms 末帧定格再自然回归，衔接连贯、
-        毫无重播/重启感。
+        三条出路：
+        - 歌播着 -> 忽略（不重播、不重置、不抢戏）；
+        - 曲目在且开播成功 -> 循环伴舞，登记歌完回调收舞；
+        - mp3 缺失 / 多媒体后端坏 -> 回落现状：固定句气泡 + click.wav +
+          shock 演出尾部定格 1.2 秒（转场帧融回 idle）。
+        结算画面打开期间照旧一律忽略。
         """
         if not should_perform(self.settlement_open):
             return
+        if should_ignore_click(self.music.is_playing()):
+            return
+        if self._music_path is not None \
+                and self.music.play(self._music_path, self._music_volume):
+            self._start_song_dance()
+            return
+        # —— 降级回落：现状的「戳我」定格演出 ——
         self.apply([bus.Say(CLICK_TEASE)])
         self._play_click_sfx()
         self.play_action("shock", hold_tail_ms=SHOCK_HOLD_TAIL_MS)
-        # 【禁用区】旧 hide 定格演出（1500ms），主人拍板暂时下线，可随时恢复：
+        # 【禁用区】旧单击 hide 定格演出（1500ms），主人拍板暂时下线，可随时恢复：
         # self.play_action("hide", hold_tail_ms=HIDE_HOLD_TAIL_MS)
+
+    def _start_song_dance(self):
+        """伴舞：dance 以 loop 档只循环表演帧（剔转场尾），歌完回调收舞。
+
+        循环规格由 song_flow.dance_loop_spec 纯函数裁决；dance 缺图等
+        极端情况退化走标准点播路径（单图直接切换），歌照播不受牵连。
+        """
+        self.music.on_finished(self._on_song_finished)
+        entry = self.states.get("dance")
+        if entry and entry.get("frames"):
+            spec = dance_loop_spec(entry, self.music.duration_seconds(),
+                                   entry.get("frame_ms") or 0)
+            if self.play_action("dance", play="loop", spec=spec):
+                return
+        self.play_action("dance", play="loop")
+
+    def _on_song_finished(self):
+        """歌完收舞：谢幕回发呆；期间被结算等接管的演出不重复收拾。"""
+        if self.action is not None:
+            self._finish_action()
 
     def _perform_double_click(self):
         """双击=点歌开跳：click.wav（「时间来不及了」原声）+ dance 扭舞一段。
 
         dance 是 once+return_to=idle，序列尾部经转场补帧融回 idle，
-        跳完自然谢幕；结算画面打开期间照旧一律忽略。
+        跳完自然谢幕；歌播着的时候与结算画面打开期间一律忽略。
         """
         if not should_perform(self.settlement_open):
+            return
+        if should_ignore_click(self.music.is_playing()):
             return
         self._play_click_sfx()
         self.play_action("dance")
@@ -899,8 +951,13 @@ class PetWindow(QWidget):
 
     # ---------------- 结算画面 <-> 本体表情联动 ----------------
     def _on_settlement_opened(self):
-        """结算开演：记住此刻心情，扭舞改走新的动作点播（循环档直到谢幕）。"""
+        """结算开演：记住此刻心情，扭舞改走新的动作点播（循环档直到谢幕）。
+
+        点歌中的整首 BGM 先停：结算画面自带 2.5 倍速 BGM，两首叠播
+        属于双重打扰；停歌顺手清掉歌完回调，收舞交给结算关窗流程。
+        """
         self.settlement_open = True
+        self.music.stop()
         if self._prev_state is None:      # 重复 opened 只记第一次，幂等
             self._prev_state = self.current
         target = "dance" if "dance" in self.states else "cheer"
@@ -967,6 +1024,7 @@ class PetWindow(QWidget):
         self.setVisible(not self.isVisible())
 
     def quit_app(self):
+        self.music.stop()   # 退出前先停歌，别让音乐拖尾
         if self.bridge:
             self.bridge.stop()
         self._save_position()

@@ -127,21 +127,53 @@ class TestResolveClickSfx(unittest.TestCase):
 
 
 # ------------------------------------------------- host 演出参数（duck-typing）
-class _RecordingWin:
-    """假宿主：只记录 apply/play_action/play 专音效的调用。"""
+class _FakeMusic:
+    """假 MusicPlayer：is_playing 可拨档，play 可编排成功/失败。"""
 
-    def __init__(self, settlement_open=False):
+    def __init__(self, playing=False, play_ok=True):
+        self._playing = playing
+        self._play_ok = play_ok
+        self.play_calls = []      # [(path, volume)]
+        self.finish_cbs = []
+        self.stop_calls = 0
+
+    def is_playing(self):
+        return self._playing
+
+    def play(self, path, volume):
+        self.play_calls.append((path, volume))
+        return self._play_ok
+
+    def on_finished(self, cb):
+        self.finish_cbs.append(cb)
+
+    def duration_seconds(self):
+        return 0.0
+
+    def stop(self):
+        self.stop_calls += 1
+        self._playing = False
+
+
+class _RecordingWin:
+    """假宿主：只记录 apply/play_action/play 专音效/music 的调用。"""
+
+    def __init__(self, settlement_open=False, music_ok=True):
         self.settlement_open = settlement_open
         self.applied = []
-        self.played = []
+        self.played = []          # [(name, play, hold_tail_ms, spec)]
         self.click_sfx_plays = 0
         self.suck_plays = 0
+        self.music = _FakeMusic(play_ok=music_ok)
+        self.music_path = None    # 缺省无 mp3 -> 单击回落「戳我」现状
+        self.states = {"dance": {"frames": ["d0.png", "d1.png"],
+                                 "frame_ms": 41, "return_to": "idle"}}
 
     def apply(self, cmds):
         self.applied += cmds
 
-    def play_action(self, name, play=None, hold_tail_ms=None):
-        self.played.append((name, play, hold_tail_ms))
+    def play_action(self, name, play=None, hold_tail_ms=None, spec=None):
+        self.played.append((name, play, hold_tail_ms, spec))
         return True
 
     def _play_click_sfx(self):
@@ -153,9 +185,9 @@ class _RecordingWin:
 
 
 class TestHostClickShows(unittest.TestCase):
-    """单击/双击演出的参数快照：固定句、hold、状态名、结算忽略。"""
+    """单击/双击演出的参数快照：点歌、忽略条款、降级与结算忽略。"""
 
-    def _win(self, **kw):
+    def _win(self, music_path=None, **kw):
         from petfw.host import PetWindow
         win = PetWindow.__new__(PetWindow)   # 不跑 __init__，只借方法
         rec = _RecordingWin(**kw)
@@ -165,9 +197,14 @@ class TestHostClickShows(unittest.TestCase):
         win.play_action = rec.play_action
         win._play_click_sfx = rec._play_click_sfx
         win.play = rec.play
+        win.music = rec.music
+        win._music_path = music_path
+        win._music_volume = 0.6
+        win.states = rec.states
         return win, rec
 
-    def test_single_click_fixed_line_and_shock_hold(self):
+    def test_single_click_without_music_keeps_tease_and_shock(self):
+        """降级路径：mp3 缺失（music_path=None）回落现状的戳我定格演出。"""
         from petfw import bus
         win, rec = self._win()
         win._perform_single_click()
@@ -175,12 +212,62 @@ class TestHostClickShows(unittest.TestCase):
         say = rec.applied[0]
         self.assertIsInstance(say, bus.Say)
         self.assertEqual(say.text, "不要戳我！！！！", "固定句一字不许改")
-        self.assertEqual(rec.played, [("shock", None, 1200)],
-                         "单击改演 shock，且必须带 1200ms 尾部定格")
+        self.assertEqual(rec.played, [("shock", None, 1200, None)],
+                         "回落单击必须演 shock，且带 1200ms 尾部定格")
         self.assertEqual(rec.click_sfx_plays, 1, "click.wav 播放保持不变")
+        self.assertEqual(rec.music.play_calls, [], "没曲子就不该碰播放器")
+
+    def test_single_click_starts_song_and_loop_dance(self):
+        """主路径：整首播放 + dance 循环伴舞 + 登记歌完回调，无气泡无戳我。"""
+        import tempfile
+        song = pathlib.Path(tempfile.mkdtemp()) / "bgm.mp3"
+        song.write_bytes(b"ID3")
+        win, rec = self._win(music_path=song)
+        win._perform_single_click()
+        self.assertEqual(rec.music.play_calls, [(song, 0.6)],
+                         "整首播放，音量取 [sound] music_volume")
+        self.assertEqual(len(rec.played), 1)
+        name, play, hold, spec = rec.played[0]
+        self.assertEqual((name, play), ("dance", "loop"))
+        self.assertIsNone(hold)
+        self.assertEqual(spec["play"], "loop")
+        self.assertEqual(spec["frames"], ["d0.png", "d1.png"])
+        self.assertEqual(len(rec.music.finish_cbs), 1, "必须登记歌完回调")
+        self.assertEqual(rec.applied, [], "点歌路径不弹「不要戳我」气泡")
+        self.assertEqual(rec.click_sfx_plays, 0, "点歌路径不叠 click.wav")
+
+    def test_single_click_falls_back_when_backend_dead(self):
+        """降级路径：后端不可用（play 返回 False）回落戳我定格演出。"""
+        from petfw import bus
+        import tempfile
+        song = pathlib.Path(tempfile.mkdtemp()) / "bgm.mp3"
+        song.write_bytes(b"ID3")
+        win, rec = self._win(music_path=song, music_ok=False)
+        win._perform_single_click()
+        say = rec.applied[0]
+        self.assertIsInstance(say, bus.Say)
+        self.assertEqual(rec.played, [("shock", None, 1200, None)])
+        self.assertEqual(rec.click_sfx_plays, 1)
+        self.assertEqual(len(rec.music.finish_cbs), 0, "没开播就不登记回调")
+
+    def test_single_click_ignored_while_music_playing(self):
+        """歌播着的时候单击一律忽略：不重播、不重置、不触发别的演出。"""
+        import tempfile
+        song = pathlib.Path(tempfile.mkdtemp()) / "bgm.mp3"
+        song.write_bytes(b"ID3")
+        win, rec = self._win(music_path=song)
+        rec.music._playing = True
+        win._perform_single_click()
+        self.assertEqual(rec.applied, [])
+        self.assertEqual(rec.played, [])
+        self.assertEqual(rec.click_sfx_plays, 0)
+        self.assertEqual(rec.music.play_calls, [])
 
     def test_single_click_silent_during_settlement(self):
-        win, rec = self._win(settlement_open=True)
+        import tempfile
+        song = pathlib.Path(tempfile.mkdtemp()) / "bgm.mp3"
+        song.write_bytes(b"ID3")
+        win, rec = self._win(music_path=song, settlement_open=True)
         win._perform_single_click()
         self.assertEqual(rec.applied, [])
         self.assertEqual(rec.played, [])
@@ -191,9 +278,17 @@ class TestHostClickShows(unittest.TestCase):
         win, rec = self._win()
         win._perform_double_click()
         self.assertEqual(rec.suck_plays, 0, "合成 suck 音效必须一并退役")
-        self.assertEqual(rec.played, [("dance", None, None)])
+        self.assertEqual(rec.played, [("dance", None, None, None)])
         self.assertEqual(rec.click_sfx_plays, 1, "双击要播 click.wav 原声")
         self.assertEqual(rec.applied, [], "双击不弹气泡")
+
+    def test_double_click_ignored_while_music_playing(self):
+        """歌播着的时候双击同样忽略：不重播、不重置 dance。"""
+        win, rec = self._win()
+        rec.music._playing = True
+        win._perform_double_click()
+        self.assertEqual(rec.played, [])
+        self.assertEqual(rec.click_sfx_plays, 0)
 
     def test_double_click_silent_during_settlement(self):
         win, rec = self._win(settlement_open=True)
@@ -201,6 +296,27 @@ class TestHostClickShows(unittest.TestCase):
         self.assertEqual(rec.suck_plays, 0)
         self.assertEqual(rec.played, [])
         self.assertEqual(rec.click_sfx_plays, 0)
+
+    def test_settlement_open_stops_song_music(self):
+        """结算开屏给点歌让路：停歌收回调，画面 BGM 独自上场。"""
+        win, rec = self._win(music_path="somewhere/bgm.mp3")
+        rec.music._playing = True
+        win._prev_state = None
+        win.current = "idle"
+        win._on_settlement_opened()
+        self.assertEqual(rec.music.stop_calls, 1, "结算开屏必须停掉点歌 BGM")
+        self.assertTrue(win.settlement_open)
+
+    def test_quit_app_stops_music(self):
+        """退出进程前先停歌，别让音乐拖尾。"""
+        from petfw.host import PetWindow
+        win = PetWindow.__new__(PetWindow)
+        rec = _RecordingWin()
+        win.bridge = None
+        win._save_position = lambda: None
+        win.music = rec.music
+        win.quit_app()
+        self.assertEqual(rec.music.stop_calls, 1)
 
 
 if __name__ == "__main__":
