@@ -26,6 +26,9 @@ for need in ("manifest.json", "states"):
 datas = [
     (str(ASSETS / "manifest.json"), "assets"),
     (str(ASSETS / "states"), "assets/states"),
+    # 私有音频随 exe 分发（主人拍板：朋友版开箱即唱；仓库零音频红线不破）
+    (str(ROOT / "assets" / "local" / "click.wav"), "assets/local"),
+    (str(ROOT / "assets" / "local" / "bgm.mp3"), "assets/local"),
 ]
 
 a = Analysis(
