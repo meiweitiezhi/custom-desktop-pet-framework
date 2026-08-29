@@ -5,6 +5,29 @@
 """
 from __future__ import annotations
 
+import pathlib
+
+from .music_player import resolve_music
+
+# 六拍舞（dance6）配乐候选，本地私有忽略区：烘焙阶段从跳舞结算视频抽出的
+# 音轨优先，源视频兜底（QMediaPlayer 能直接放 mp4 的音轨）。
+DANCE6_BGM_CANDIDATES = (
+    "assets/local/dance6_bgm.m4a",
+    "assets/local/source/跳舞结算_30到53秒.mp4",
+)
+
+
+def resolve_dance6_bgm(base_dirs=()) -> "pathlib.Path | None":
+    """六拍舞配乐裁决：候选列表逐个按 base_dirs 解析，存在即用。
+
+    全缺/乱码一律 None，宿主据此静默开跳（舞照跳，只是没有配乐）。
+    """
+    for raw in DANCE6_BGM_CANDIDATES:
+        hit = resolve_music(raw, base_dirs)
+        if hit is not None:
+            return hit
+    return None
+
 
 def should_ignore_click(music_playing) -> bool:
     """播歌忽略条款：歌播着的时候，单击/双击一律忽略。

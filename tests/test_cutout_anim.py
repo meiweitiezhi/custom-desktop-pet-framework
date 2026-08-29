@@ -117,7 +117,7 @@ class TestFrameCount(unittest.TestCase):
 
 class TestRecipes(unittest.TestCase):
     EXPECTED_KEYS = {"laugh", "cry", "shock", "eat",
-                     "sleep", "idle", "cheer", "angry"}
+                     "sleep", "idle", "cheer", "angry", "six_beat"}
 
     def test_registry_complete_and_valid(self):
         self.assertEqual(set(RECIPES.keys()), self.EXPECTED_KEYS)

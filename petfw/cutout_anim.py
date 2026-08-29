@@ -29,6 +29,7 @@ MARGIN = 72
 KNOWN_OPS = (
     "hold", "shake", "squash", "lean_back", "bounce", "wiggle",
     "spin", "particles", "pulse", "blink", "shake_head_blue",
+    "sweep", "stretch",
 )
 
 
@@ -252,6 +253,34 @@ def lean_back(deg: float, beats: int) -> dict:
     return {"op": "lean_back", "deg": float(deg), "beats": int(beats)}
 
 
+def sweep(deg: float, beats: int, trail: bool = False) -> dict:
+    """斜向大扫摆：0→deg→0 的往返弧（前半程 ease 出弧、后半程 ease 收势）。
+
+    与 lean_back 的正弦包络不同，sweep 前半程用 ease_in_out 更「甩」，
+    trail=True 时沿弧线叠印半透明残影（大划弧的剪影拖尾）。
+    """
+    return {"op": "sweep", "deg": float(deg), "beats": int(beats),
+            "trail": bool(trail)}
+
+
+def stretch(sx: float, sy: float, beats: int, dy: int = 0,
+            symbol: str | None = None, count: int = 0) -> dict:
+    """定向拉伸/位移脉冲：1→(sx, sy, dy)→1 正弦往返（展开/高举这类
+    「胀一下又回位」的拍点，端点归中保证循环无缝）。
+
+    symbol + count 可选：粒子随本拍帧窗同步迸发（如高举顶点爆星）。
+    """
+    op = {"op": "stretch", "sx": float(sx), "sy": float(sy),
+          "beats": int(beats), "dy": int(dy)}
+    if symbol is not None:
+        if symbol not in _SYMBOL_PALETTE:
+            raise ValueError(f"未知符号: {symbol!r}，"
+                             f"可选 {tuple(_SYMBOL_PALETTE)}")
+        op["symbol"] = symbol
+        op["count"] = int(count)
+    return op
+
+
 def bounce(amp: int, beats: int) -> dict:
     """上下弹跳（ease_out_back 起跳/落地回弹），每拍一个弧。"""
     return {"op": "bounce", "amp": int(amp), "beats": int(beats)}
@@ -379,6 +408,18 @@ RECIPES = {
         shake(5, 4),
         hold(3),
     ]),
+    # 程序剪纸六拍舞（主人钦定的千问阅舞分析）：1垂臂起拍 2斜上大划弧
+    # 3回拳卡重拍 4挥臂蓄力 5双臂展开 6高举过头顶；手臂轨迹开放夸张，
+    # 循环点在第 6 拍后（每个 op 端点归中 → 拍间与循环点天然无缝）。
+    "six_beat": Recipe("six_beat", fps=30, cycles=3, steps=[
+        squash([1, 0.88, 1], 7),                  # 拍1 垂臂起拍：下蹲压扁
+        sweep(-22, 10, trail=True),               # 拍2 斜上大划弧+弧线残影
+        squash([1, 0.85, 1], 3),                  # 拍3 回拳卡重拍：快压 0.85
+        wiggle(7, 3),                             # 拍4 挥臂蓄力：高频小摆
+        stretch(1.15, 0.94, 6, symbol="star", count=2),   # 拍5 展开+双星
+        stretch(0.94, 1.15, 8, dy=-12, symbol="star",
+                count=4),                         # 拍6 高举+顶点爆星
+    ]),
 }
 
 for _name, _r in RECIPES.items():
@@ -407,6 +448,13 @@ def _hop(p: float) -> float:
     return 1.0 - ease_out_back((p - 0.5) / 0.5)
 
 
+def _swing(p: float) -> float:
+    """往返弧包络：前半程 ease_in_out 甩到峰值，后半程 ease_in_out 收回。"""
+    if p < 0.5:
+        return ease_in_out(p / 0.5)
+    return 1.0 - ease_in_out((p - 0.5) / 0.5)
+
+
 class _Plan:
     """把配方展开为带帧区间的计划表，逐帧求姿态参数。"""
 
@@ -428,7 +476,8 @@ class _Plan:
 
     # -- 逐帧姿态 ------------------------------------------------------------
     def state_at(self, f: int) -> dict:
-        st = {"dx": 0, "dy": 0, "rot": 0.0, "sx": 1.0, "sy": 1.0}
+        st = {"dx": 0, "dy": 0, "rot": 0.0, "sx": 1.0, "sy": 1.0,
+              "ghosts": ()}
         for op, s, n in self.plan:
             if n <= 0 or not (s <= f < s + n):
                 continue
@@ -465,6 +514,19 @@ class _Plan:
             st["rot"] += op["deg"] * math.sin(2 * math.pi * waves * u)
         elif name == "spin":
             st["rot"] += 360.0 * op["turns"] * u
+        elif name == "sweep":
+            st["rot"] += op["deg"] * _swing(u)
+            if op.get("trail"):
+                # 弧线残影：沿来路弧线取两帧旧角度，越近越浓（端点近 0 滤掉）
+                st["ghosts"] = tuple(
+                    (op["deg"] * _swing(max(0.0, u - lag)), 1.0 - k * 0.42)
+                    for k, lag in ((1, 0.14), (2, 0.28))
+                    if abs(op["deg"] * _swing(max(0.0, u - lag))) > 2.0)
+        elif name == "stretch":
+            env = math.sin(math.pi * u)
+            st["sx"] *= 1.0 + (op["sx"] - 1.0) * env
+            st["sy"] *= 1.0 + (op["sy"] - 1.0) * env
+            st["dy"] += int(round(op.get("dy", 0) * env))
 
     # -- 粒子与常驻特效 -------------------------------------------------------
     def particle_specs(self, total: int, box):
@@ -472,13 +534,18 @@ class _Plan:
         bbx0, bby0, bbx1, bby1 = box
         ccx, ccy = (bbx0 + bbx1) / 2, (bby0 + bby1) / 2
         radius = max(bbx1 - bbx0, bby1 - bby0) / 2
-        seq = [op for op, _, n in self.plan if op["op"] == "particles"]
-        for gi, op in enumerate(seq):
-            win_s, win_e = _particle_window(op["when"], total)
+        # particles 是全局 when 窗口；stretch 等自带 symbol 的 op 随本拍帧窗
+        seq = [(op, s, n) for op, s, n in self.plan
+               if op["op"] == "particles" or op.get("symbol")]
+        for gi, (op, s, n) in enumerate(seq):
+            if op["op"] == "particles":
+                win_s, win_e = _particle_window(op["when"], total)
+            else:
+                win_s, win_e = s, s + max(1, n)
             span = max(1, win_e - win_s)
             rng = random.Random(self.seed * 1000003 + gi * 7919 + 17)
             color = op.get("color")
-            for i in range(int(op["count"])):
+            for i in range(int(op.get("count", 0))):
                 theta = rng.uniform(0, 2 * math.pi)
                 birth = win_s + rng.uniform(0.0, 0.55) * span
                 life = max(4, min(span, int(rng.uniform(10, 18))))
@@ -548,6 +615,14 @@ def compose(recipe, base: Image.Image, seed: int = 42) -> list:
 
     def _paste_figure(layer, f):
         st = plan.state_at(f)
+        # 弧线残影先印（低透明度旧角度剪影），正身叠在上面盖过交叠区
+        for gang, strength in st.get("ghosts", ()):
+            ghost = base.rotate(gang, resample=Image.Resampling.BICUBIC,
+                                expand=True)
+            gw, gh = ghost.size
+            layer.alpha_composite(
+                _faded(ghost, int(110 * strength)),
+                (int(cx - gw / 2), int(floor_y - gh)))
         spr = _sprite(f)
         if abs(st["sx"] - 1.0) > 1e-4 or abs(st["sy"] - 1.0) > 1e-4:
             nw = max(1, int(round(bw * st["sx"])))

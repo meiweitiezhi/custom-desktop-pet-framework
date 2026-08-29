@@ -32,7 +32,7 @@ from .click_flow import (DOUBLE_CLICK_MS, ClickResolver, resolve_click_sfx,
 from .drivers import get_driver
 from .extensions.growth import GrowthTracker, level_for
 from .music_player import MusicPlayer, resolve_music
-from .song_flow import dance_loop_spec, should_ignore_click
+from .song_flow import dance_loop_spec, resolve_dance6_bgm, should_ignore_click
 from .streaks import BuildStreak
 
 ASSETS = paths.ASSETS            # 只读素材（frozen 时在解包目录）
@@ -79,6 +79,11 @@ MENU_FUN = ("cry",)
 # alien_suck 现居 manifest 禁用区，声明保留以维持 manifest 防漂移检查。
 ACTION_ONLY = ("alien_suck",)
 ACTION_ZH = {"alien_suck": "UFO 吸入"}
+
+# 程序剪纸六拍舞（dance6）：情绪组常驻点播词条。同属「非表情状态」，
+# 走专属 play_six_beat（循环舞 + 配乐放一遍），不进 STATE_ZH/bus.STATES。
+SIX_BEAT_STATE = "dance6"
+SIX_BEAT_ZH = "六拍舞"
 
 # 左键单击专属演出参数：固定句、shock 尾部定格时长（宿主接管，不走驱动）
 CLICK_TEASE = "不要戳我！！！！"
@@ -677,6 +682,24 @@ class PetWindow(QWidget):
         # self.play("suck")
         # self.play_action("alien_suck")
 
+    def play_six_beat(self) -> bool:
+        """六拍舞点播（菜单「情绪」组词条）：常驻循环舞 + 配乐放一遍。
+
+        舞走 loop 档永续循环——once 的表演窗口/定格/谢幕逻辑一概不适用；
+        配乐放烘焙抽好的音轨（缺文件回落源视频），放完一遍即停、不循环，
+        团子继续循环跳，直到用户点别的动作。结算画面打开期间一律忽略；
+        配乐缺失或多媒体后端坏时静默开跳，绝不拦舞。
+        """
+        if not should_perform(self.settlement_open):
+            return False
+        if not self.play_action(SIX_BEAT_STATE, play="loop"):
+            return False
+        self.music.stop()   # 顶掉可能在播的点歌，顺手清掉旧歌完回调
+        bgm = resolve_dance6_bgm((paths.APP_DIR, paths.BUNDLE_DIR))
+        if bgm is not None:
+            self.music.play(bgm, self._music_volume)
+        return True
+
     def _play_click_sfx(self):
         """播 [sound] click_sfx 指向的本地 wav（独立 QSoundEffect 实例）。
 
@@ -856,6 +879,9 @@ class PetWindow(QWidget):
         for st in MENU_EMOTION:
             if st in window.states:
                 menu.addAction(_label(st), lambda s=st: window.play_action(s))
+        # —— 六拍舞：程序剪纸常驻循环舞，词条固定在情绪组末尾 ——
+        if SIX_BEAT_STATE in window.states:
+            menu.addAction(SIX_BEAT_ZH, window.play_six_beat)
         menu.addSeparator()
         # —— 整活组 ——
         _header("整活")

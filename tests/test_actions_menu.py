@@ -38,11 +38,15 @@ class _FakeWindow:
         self.dispatched = []
         self.hooks = []
         self.scanned = 0
+        self.six_beat_plays = 0
         self.toggled = []
         self.quits = 0
 
     def play_action(self, name):
         self.played.append(name)
+
+    def play_six_beat(self):
+        self.six_beat_plays += 1
 
     def scan_growth(self):
         self.scanned += 1
@@ -60,9 +64,9 @@ class _FakeWindow:
         self.quits += 1
 
 
-# 五态精简后的真实仓库现状：活动区=五件套+cheer（打气）；
+# 五态精简后的真实仓库现状：活动区=五件套+cheer（打气）+dance6（六拍舞）；
 # laugh/eat/hide/love/alien/blushmax/alien_suck 已入 manifest._disabled_states
-LOADED = ["idle", "cheer", "sleep", "shock", "dance", "cry"]
+LOADED = ["idle", "cheer", "sleep", "shock", "dance", "cry", "dance6"]
 
 
 def _texts(menu: QMenu) -> list:
@@ -77,8 +81,9 @@ class TestActionsMenu(unittest.TestCase):
 
     def test_emotion_and_fun_groups_list_only_loaded_states(self):
         texts = _texts(self.menu)
-        # 五态精简：情绪组=发呆/打气/睡觉/惊讶/扭舞，整活组只剩哭唧唧
-        for zh in ("发呆", "打气", "睡觉", "惊讶", "扭舞", "哭唧唧"):
+        # 五态精简：情绪组=发呆/打气/睡觉/惊讶/扭舞 + 常驻词条六拍舞，
+        # 整活组只剩哭唧唧
+        for zh in ("发呆", "打气", "睡觉", "惊讶", "扭舞", "六拍舞", "哭唧唧"):
             self.assertIn(zh, texts)
         # 禁用七态 + UFO 吸入必须整词缺席（数据在 _disabled_states 里）
         for zh in ("干饭", "笑哭", "生气", "缩帽躲", "比小心心", "外星吸人",
@@ -94,6 +99,14 @@ class TestActionsMenu(unittest.TestCase):
                 if not a.isSeparator()}
         acts["扭舞"].trigger()
         self.assertEqual(self.win.played, ["dance"])
+
+    def test_six_beat_entry_triggers_play_six_beat(self):
+        """六拍舞词条不走 play_action 通用路径，专属带配乐点播。"""
+        acts = {a.text(): a for a in self.menu.actions()
+                if not a.isSeparator()}
+        acts["六拍舞"].trigger()
+        self.assertEqual(self.win.six_beat_plays, 1)
+        self.assertEqual(self.win.played, [], "六拍舞不得误走 play_action")
 
     def test_system_group_reuses_window_slots(self):
         acts = {a.text(): a for a in self.menu.actions()
@@ -126,17 +139,17 @@ class TestManifestV3Fields(unittest.TestCase):
 
     def test_multi_frame_states_play_once_and_return_to_idle(self):
         multi = {k: v for k, v in self._states().items() if v.get("frames")}
-        # 活动区带帧序列的恰为这五个（含 shock/cry/dance 的 _Q 压扁转场帧
-        # 与 transition-v2 起改为 45 帧常驻循环档的 cheer）
+        # 活动区带帧序列的恰为这六项（含 shock/cry/dance 的 _Q 压扁转场帧、
+        # transition-v2 起改为 45 帧常驻循环档的 cheer、六拍舞循环档 dance6）
         self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry",
-                                      "cheer"})
+                                      "cheer", "dance6"})
         for name, spec in multi.items():
-            if name == "cheer":
-                # cheer 是唯一例外：打气派对循环档（常驻搞笑，不谢幕）
+            if name in ("cheer", "dance6"):
+                # 循环档双例外：常驻可点播的循环舞（不谢幕）
                 self.assertEqual(spec.get("play"), "loop",
-                                 "cheer 必须是 loop 常驻循环")
+                                 f"{name} 必须是 loop 常驻循环")
                 self.assertFalse(spec.get("pingpong"),
-                                 "cheer 正向循环，不走乒乓")
+                                 f"{name} 正向循环，不走乒乓")
                 continue
             self.assertEqual(spec.get("play"), "once",
                              f"{name} 缺 play=once")

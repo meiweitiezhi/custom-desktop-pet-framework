@@ -45,8 +45,8 @@ class TestDisabledZoneManifest(unittest.TestCase):
     def test_states_only_keeps_active_roster(self):
         states = _manifest()["states"]
         self.assertEqual(
-            set(states), set(KEEP_FIVE) | {"cheer"},
-            "活动区 = 五件套 + cheer（打气未列入禁用名单，照常保留）")
+            set(states), set(KEEP_FIVE) | {"cheer", "dance6"},
+            "活动区 = 五件套 + cheer（打气）+ dance6（六拍舞常驻循环档）")
         for name in DISABLED_EIGHT:
             self.assertNotIn(name, states, f"{name} 必须只存在于禁用区")
 
@@ -123,9 +123,11 @@ class TestNoLivePathToDisabledStates(unittest.TestCase):
             self.assertIn(st, self.active, f"weather {cond} -> {st}")
 
     def test_menu_roster_covers_only_active_states(self):
-        from petfw.host import MENU_EMOTION, MENU_FUN
-        self.assertEqual(set(MENU_EMOTION) | set(MENU_FUN), self.active,
-                         "菜单词条集合必须恰等于活动状态集合")
+        from petfw.host import MENU_EMOTION, MENU_FUN, SIX_BEAT_STATE
+        self.assertEqual(
+            set(MENU_EMOTION) | set(MENU_FUN) | {SIX_BEAT_STATE},
+            self.active,
+            "菜单词条集合（含六拍舞专属词条）必须恰等于活动状态集合")
 
 
 if __name__ == "__main__":

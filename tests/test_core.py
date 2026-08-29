@@ -538,8 +538,8 @@ class TestManifest(unittest.TestCase):
         # 专属演出动作（alien_suck）只在 manifest 登记、不进 SetState 词表，
         # 但必须在 host.ACTION_ONLY 里声明，防止 manifest 出现野名字。
         # 五态精简：alien_suck 等八条住在顶层 "_disabled_states" 禁用区，
-        # 活动区 + 禁用区合起来仍不许超出词表 ∪ ACTION_ONLY。
-        from petfw.host import ACTION_ONLY
+        # 活动区 + 禁用区合起来仍不许超出词表 ∪ ACTION_ONLY ∪ 六拍舞。
+        from petfw.host import ACTION_ONLY, SIX_BEAT_STATE
         manifest = json.loads(
             (pathlib.Path(__file__).resolve().parents[1]
              / "assets" / "manifest.json").read_text(encoding="utf-8"))
@@ -552,7 +552,8 @@ class TestManifest(unittest.TestCase):
                         "核心态至少要登记在活动区或禁用区之一")
         self.assertTrue((core - zone) <= mk,
                         "未被禁用的核心态必须仍留在活动区")
-        self.assertLessEqual(mk | zone, allst | set(ACTION_ONLY))
+        self.assertLessEqual(mk | zone,
+                             allst | set(ACTION_ONLY) | {SIX_BEAT_STATE})
         self.assertEqual(set(ACTION_ONLY) - allst, zone - allst,
                          "禁用区里的专属动作必须与 ACTION_ONLY 一一对应")
         self.assertIn("alien_suck", zone)
