@@ -232,14 +232,20 @@ class TestManifestV4(unittest.TestCase):
                                  f"{name} 的 frames 不得再混 _Q 转场帧")
                 self.assertFalse("_S" in stem,
                                  f"{name} 的 frames 不得回潮引用旧 _S 插帧")
-            # 剥离后的表演帧数锁死（实际磁盘形态：28/28/61 张表演帧）
-            expect = {"shock": 28, "cry": 28, "dance": 61}
-            self.assertEqual(len(spec["frames"]), expect[name],
-                             f"{name} 表演段帧数必须恰为 {expect[name]}")
+            # shock/cry 插帧档帧数锁死；dance 视频重建档帧数随源视频浮动
+            # （解码去重后不可预知），改真值驱动只锁下限与连续编号
+            expect = {"shock": 28, "cry": 28}
+            if name in expect:
+                self.assertEqual(len(spec["frames"]), expect[name],
+                                 f"{name} 表演段帧数必须恰为 {expect[name]}")
+            else:
+                self.assertGreater(len(spec["frames"]), 24,
+                                   f"{name} 全帧档必须多于 24 帧")
             tag = "F" if name == "dance" else "D"
             self.assertEqual(
                 spec["frames"],
-                [f"states/{name}_{tag}{i:03d}.png" for i in range(expect[name])],
+                [f"states/{name}_{tag}{i:03d}.png"
+                 for i in range(len(spec["frames"]))],
                 f"{name} 表演帧必须是本状态的连续编号帧")
 
     def test_transition_frames_reference_real_files(self):

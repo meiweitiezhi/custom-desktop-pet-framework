@@ -276,12 +276,22 @@ class TestManifestPerformWindow(unittest.TestCase):
         self.assertNotIn("perform_seconds", spec)
         p = self._player("dance")
         durs = {name: dur for name, dur in p.segments}
-        self.assertAlmostEqual(durs["perform"], 61 * 0.041, places=9,
+        # dance 视频重建档：帧数随源视频浮动，一律读 manifest 真值折算
+        ms = float(spec["frame_ms"]) / 1000.0
+        self.assertGreater(len(spec["frames"]), 24,
+                           "dance 全帧档必须多于 24 帧（真值驱动不锁死）")
+        self.assertAlmostEqual(durs["perform"], len(spec["frames"]) * ms,
+                               places=9,
                                msg="dance 表演段必须照旧只播一轮")
         self.assertNotIn("hold", durs,
                          "dance 定格 0 秒：0 长段不许出现在时间线上")
-        self.assertAlmostEqual(durs["transition"], 24 * 0.041, places=9)
-        self.assertAlmostEqual(float(spec["max_seconds"]), 4.485, places=9)
+        self.assertAlmostEqual(durs["transition"],
+                               len(spec["transition_frames"]) * ms, places=9)
+        expected_max = round(len(spec["frames"]) * ms
+                             + len(spec["transition_frames"]) * ms + 1.0, 3)
+        self.assertAlmostEqual(float(spec["max_seconds"]), expected_max,
+                               places=9,
+                               msg="max_seconds 必须 = 表演+转场+1s 宽限")
         self.assertAlmostEqual(p.total_s + 1.0,
                                float(spec["max_seconds"]), places=9)
         p.tick(0.5)
