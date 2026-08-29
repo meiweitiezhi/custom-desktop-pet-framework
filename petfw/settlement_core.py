@@ -81,8 +81,8 @@ def find_bgm(assets_dir, extra_dirs=()) -> "Path | None":
     让朋友拿到 exe 后自行投放 mp3 也能生效。
     """
     try:
-        dirs = [Path(assets_dir) / "local"]
-        dirs += [Path(d) / "local" for d in extra_dirs]
+        dirs = [Path(d) / "local" for d in extra_dirs]
+        dirs.append(Path(assets_dir) / "local")
         for d in dirs:
             for name in BGM_CANDIDATES:
                 candidate = d / name

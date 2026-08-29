@@ -709,7 +709,8 @@ class PetWindow(QWidget):
         if not self._sound_enabled:
             return
         path = resolve_click_sfx(
-            self.cp.get("sound", "click_sfx", fallback=""), paths.APP_DIR)
+            self.cp.get("sound", "click_sfx", fallback=""),
+            (paths.APP_DIR, paths.BUNDLE_DIR))
         if path is None:
             self.play("pop")
             return

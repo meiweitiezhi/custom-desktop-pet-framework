@@ -39,7 +39,7 @@ def should_perform(settlement_open: bool) -> bool:
 DEFAULT_CLICK_SFX = "assets/local/click.wav"  # 「时间来不及了」原声，本地私有
 
 
-def resolve_click_sfx(raw, base_dir=None) -> str | None:
+def resolve_click_sfx(raw, base_dirs=()) -> str | None:
     """[sound] click_sfx 配置裁决：填了且文件存在才用专属音效。
 
     相对路径相对 base_dir（仓库根 / exe 目录）解析；
@@ -51,9 +51,16 @@ def resolve_click_sfx(raw, base_dir=None) -> str | None:
         if not text:
             text = DEFAULT_CLICK_SFX
         path = pathlib.Path(text)
-        if not path.is_absolute() and base_dir is not None:
-            path = pathlib.Path(base_dir) / text
-        return str(path) if path.is_file() else None
+        if path.is_absolute():
+            return str(path) if path.is_file() else None
+        bases = base_dirs if isinstance(base_dirs, (list, tuple)) else (base_dirs,)
+        for base in bases:
+            if base is None:
+                continue
+            cand = pathlib.Path(base) / text
+            if cand.is_file():
+                return str(cand)
+        return None
     except Exception:
         return None
 
