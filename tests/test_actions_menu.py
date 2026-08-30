@@ -141,7 +141,7 @@ class TestManifestV3Fields(unittest.TestCase):
         multi = {k: v for k, v in self._states().items() if v.get("frames")}
         # 活动区带帧序列的恰为这六项（含 shock/cry 的 _Q、dance 的 _T
         # 压扁转场帧、45 帧常驻循环档的 cheer、六拍舞循环档 dance6）
-        self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry",
+        self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry", "vroom",
                                       "cheer", "dance6"})
         for name, spec in multi.items():
             if name in ("cheer", "dance6"):

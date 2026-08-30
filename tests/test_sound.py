@@ -40,12 +40,12 @@ def _wave_info(data: bytes):
 class TestSoundCore(unittest.TestCase):
 
     # ---------------------------------------------------------- 词表与兜底
-    def test_available_names_is_eight_tuple(self):
+    def test_available_names_matches_registry(self):
         names = available_names()
         self.assertIsInstance(names, tuple)
         self.assertEqual(set(names),
                          {"pop", "boing", "ding", "chime", "wah", "tada",
-                          "kiss", "suck"})
+                          "kiss", "suck", "vroom"})
 
     def test_suck_is_a_rising_sweep(self):
         # 吸入感来自上扫：前半段主频必须低于后半段主频（过零间隔变短）

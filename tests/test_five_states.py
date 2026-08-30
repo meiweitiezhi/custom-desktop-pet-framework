@@ -45,8 +45,10 @@ class TestDisabledZoneManifest(unittest.TestCase):
     def test_states_only_keeps_active_roster(self):
         states = _manifest()["states"]
         self.assertEqual(
-            set(states), set(KEEP_FIVE) | {"cheer", "dance6"},
-            "活动区 = 五件套 + cheer（打气）+ dance6（六拍舞常驻循环档）")
+            set(states),
+            set(KEEP_FIVE) | {"cheer", "dance6", "vroom"},
+            "活动区 = 五件套 + cheer（打气）+ dance6（六拍舞）"
+            " + vroom（骑摩托）")
         for name in DISABLED_EIGHT:
             self.assertNotIn(name, states, f"{name} 必须只存在于禁用区")
 

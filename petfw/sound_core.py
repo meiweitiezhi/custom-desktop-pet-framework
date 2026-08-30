@@ -16,7 +16,8 @@ SAMPLE_RATE = 22050   # 反馈类短音效的甜点采样率：合成快、文�
 PEAK_LIMIT = 0.85     # 全体样本峰值上限（相对满幅），杜绝爆音破声
 
 # 八种音效词表；宿主触发与测试防漂移都以这里为准
-SOUND_NAMES = ("pop", "boing", "ding", "chime", "wah", "tada", "kiss", "suck")
+SOUND_NAMES = ("pop", "boing", "ding", "chime", "wah", "tada", "kiss", "suck",
+               "vroom")
 
 
 def available_names() -> tuple:
@@ -190,6 +191,32 @@ def _gen_suck(rate: int) -> list:
     return _fade_edges(out, rate)
 
 
+
+def _gen_vroom(rate: int) -> list:
+    """摩托突突 vroom：0.45s 低频引擎脉冲串。
+
+    每 22ms 一个 90→70Hz 下滑锯齿脉冲（模拟单缸点火），脉冲间隙留
+    气口，整体包络两头收中段饱——骑上小摩托的突突突。
+    """
+    n = max(8, int(0.45 * rate))
+    out = []
+    pulse_len = max(4, int(0.015 * rate))
+    gap = max(2, int(0.007 * rate))
+    period = pulse_len + gap
+    ph = 0.0
+    for i in range(n):
+        pos = i % period
+        if pos < pulse_len:
+            u = pos / (pulse_len - 1)
+            f = 90.0 - 20.0 * u
+            ph += 2.0 * math.pi * f / rate
+            env = math.sin(math.pi * u)
+            out.append(env * math.tanh(2.2 * (2.0 * (u - 0.5))))
+        else:
+            out.append(0.0)
+    return _fade_edges(out, rate)
+
+
 _GENERATORS = {
     "pop": _gen_pop,
     "boing": _gen_boing,
@@ -199,6 +226,7 @@ _GENERATORS = {
     "tada": _gen_tada,
     "kiss": _gen_kiss,
     "suck": _gen_suck,
+    "vroom": _gen_vroom,
 }
 
 

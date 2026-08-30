@@ -498,6 +498,21 @@
         "states/dance6_D109.png",
         "states/dance6_D110.png"
       ]
+    },
+    "vroom": {
+      "file": "states/vroom_R00.png",
+      "frames": [
+        "states/vroom_R00.png",
+        "states/vroom_R01.png",
+        "states/vroom_R02.png",
+        "states/vroom_R03.png"
+      ],
+      "frame_ms": 90,
+      "bob_amp": 2,
+      "period_ms": 130,
+      "tilt_deg": 0,
+      "play": "once",
+      "return_to": "idle"
     }
   },
   "_disabled_states": {
