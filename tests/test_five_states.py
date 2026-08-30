@@ -46,9 +46,9 @@ class TestDisabledZoneManifest(unittest.TestCase):
         states = _manifest()["states"]
         self.assertEqual(
             set(states),
-            set(KEEP_FOUR) | {"cheer", "dance6", "vroom"},
+            set(KEEP_FOUR) | {"cheer", "dance6", "vroom", "snotty"},
             "活动区 = 五件套 + cheer（打气）+ dance6（六拍舞）"
-            " + vroom（骑摩托）")
+            " + vroom（骑摩托）+ snotty（甩鼻涕）")
         for name in DISABLED_NINE:
             self.assertNotIn(name, states, f"{name} 必须只存在于禁用区")
 

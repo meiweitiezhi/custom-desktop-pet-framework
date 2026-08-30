@@ -63,7 +63,7 @@ STATE_ZH = {
     "laugh": "笑哭", "shock": "惊讶", "angry": "生气", "dance": "扭舞",
     "cry": "哭唧唧", "hide": "缩帽躲", "love": "比小心心",
     "alien": "外星吸人", "blushmax": "羞耻爆炸",
-    "vroom": "骑摩托",
+    "vroom": "骑摩托", "snotty": "甩鼻涕",
 }
 
 # 右键动作菜单的两组状态词条；系统组条目在构建器里现场生成。
@@ -73,7 +73,7 @@ STATE_ZH = {
 MENU_EMOTION = ("idle", "cheer", "sleep", "shock", "dance")
 # MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
 #                 "laugh", "shock", "angry", "dance")
-MENU_FUN = ("vroom",)
+MENU_FUN = ("vroom", "snotty")
 # MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
 
 # 专属演出动作：只在 manifest 登记与动作菜单出现，不进 bus.STATES 词表
