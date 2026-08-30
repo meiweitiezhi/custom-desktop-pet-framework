@@ -332,6 +332,9 @@ class PetWindow(QWidget):
         self._click_timer = QTimer(self)
         self._click_timer.setSingleShot(True)
         self._click_timer.timeout.connect(self._on_click_window_timeout)
+        self._menu_guard_timer = QTimer(self)
+        self._menu_guard_timer.setSingleShot(True)
+        self._menu_guard_timer.timeout.connect(self._expire_menu_guard)
         self._skip_next_release = False   # 双击自带的第二次 release 要跳过
         self._click_sfx_eff = None        # click.wav 专属实例（独立于合成节流）
 
@@ -616,6 +619,10 @@ class PetWindow(QWidget):
         self._skip_next_release = True
         self.last_activity = time.monotonic()
         self._perform_double_click()
+
+    def _expire_menu_guard(self):
+        """菜单关闭后的单击屏蔽窗到期：恢复常规点击判定。"""
+        self._skip_next_release = False
 
     def _on_click_window_timeout(self):
         """280ms 到点仍只有一击：裁决为单击专属演出。"""
@@ -939,7 +946,11 @@ class PetWindow(QWidget):
         """右键点击桌宠本体：弹出动作点播菜单（与托盘共用构建器）。"""
         menu = QMenu(self)
         self.build_actions_menu(menu, self)
+        # 菜单交互期 + 关闭后短暂冷却：词条点击的 release 不许被裁决成
+        # 单击点歌（否则刚点播的哭唧唧会被伴舞当场顶掉——中途切走元凶）
+        self._skip_next_release = True
         menu.exec(e.globalPos())
+        self._menu_guard_timer.start(600)
         menu.deleteLater()
 
     # ---------------- 托盘 ----------------
