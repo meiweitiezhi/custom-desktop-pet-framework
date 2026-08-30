@@ -25,6 +25,7 @@ EXPECTED_SECONDS = {
     "tada": 0.28,    # 四连琶音各 70ms
     "kiss": 0.08,
     "suck": 0.30,    # 外星吸入：600→1600Hz 上扫 + 微光 shimmer
+    "vroom": 0.45,   # 摩托突突：45Hz 节拍锯齿脉冲串
 }
 
 
