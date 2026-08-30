@@ -26,9 +26,8 @@ for need in ("manifest.json", "states"):
 datas = [
     (str(ASSETS / "manifest.json"), "assets"),
     (str(ASSETS / "states"), "assets/states"),
-    # 私有音频随 exe 分发（主人拍板：朋友版开箱即唱；仓库零音频红线不破）
-    (str(ROOT / "assets" / "local" / "click.wav"), "assets/local"),
-    (str(ROOT / "assets" / "local" / "bgm.mp3"), "assets/local"),
+    # BGM 全量下线（朋友版不预置音频）：exe 零音频素材，反馈音效走
+    # sound_core 运行期程序合成；想配乐的用户自行放 assets/local/。
 ]
 
 a = Analysis(
