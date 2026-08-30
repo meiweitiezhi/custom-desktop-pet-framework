@@ -371,6 +371,10 @@ class PetWindow(QWidget):
         except ValueError:
             music_vol = 0.6
         self._music_volume = max(0.0, min(1.0, music_vol))
+        # 主人拍板：BGM 全量下线（朋友嫌吵）——music 总开关默认关，
+        # config [settlement] bgm=false；想恢复把 enabled_music 改 true 即可
+        self.music.music_disabled = not cp.getboolean(
+            "sound", "enabled_music", fallback=False)
         self._music_path = resolve_music(
             cp.get("sound", "music_file", fallback=""),
             (paths.APP_DIR, paths.BUNDLE_DIR))
@@ -1006,7 +1010,7 @@ class PetWindow(QWidget):
                 lines,
                 bgm_path=find_bgm(paths.ASSETS, extra_dirs=extra),
                 bgm_enabled=self.cp.getboolean("settlement", "bgm",
-                                               fallback=True),
+                                               fallback=False),
                 bgm_rate=self.cp.get("settlement", "bgm_rate",
                                      fallback="2.5"),
             )

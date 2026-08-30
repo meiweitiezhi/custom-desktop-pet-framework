@@ -89,11 +89,16 @@ class MusicPlayer:
         self._want_playing = False  # 已点播闩：play() 成功即 True，封启动空窗
 
     # ---------------- 播放控制 ----------------
+    music_disabled = False   # 总开关：True = 全部长音频下线（音效不受影响）
+
     def play(self, path, volume: float = DEFAULT_MUSIC_VOLUME) -> bool:
         """整首播放本地音频文件；成功 True，任何失败 False 且不抛。
 
         文件不存在先挡掉（不碰 Qt）；多媒体后端缺失/构造失败一律 False。
+        music_disabled=True 时一律 False（主人拍板：朋友的酒全量下线）。
         """
+        if self.music_disabled:
+            return False
         try:
             p = pathlib.Path(str(path))
         except Exception:

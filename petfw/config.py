@@ -62,6 +62,8 @@ click_sfx = assets/local/click.wav
 # music_volume 只管这首歌的音量，与上面互动音效的 volume 互不影响；
 # 文件缺失或多媒体后端不可用时，单击回落「戳我」定格演出（全程静默不崩）。
 music_file = assets/local/bgm.mp3
+# BGM 全量下线（朋友嫌吵）；想恢复整套音乐改 true
+enabled_music = false
 music_volume = 0.6
 """
 
