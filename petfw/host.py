@@ -13,6 +13,7 @@ import sys
 import tempfile
 import threading
 import time
+import pathlib
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QPoint, QTimer, Signal
