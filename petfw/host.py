@@ -489,7 +489,10 @@ class PetWindow(QWidget):
         return True
 
     def _finish_action(self):
-        """谢幕：回 来路 -> 表演者声明 -> idle 里第一个有图的；再结算排队请求。"""
+        """谢幕：回 来路 -> 表演者声明 -> idle 里第一个有图的；再结算排队请求。
+
+        候补去重：谢幕目标与候补请求相同时候补作废——「回发呆」不该被
+        排队的同目标请求二次触发（表演中提醒塞进来的 idle 就是这种）。"""
         player, self.action = self.action, None
         base = self._action_prev
         self._action_prev = None
@@ -500,7 +503,8 @@ class PetWindow(QWidget):
         self.set_state(target)
         if self.pending_state is not None:
             want, self.pending_state = self.pending_state, None
-            self.set_state(want)
+            if want != target:
+                self.set_state(want)
 
     def _celebrating(self, now: float) -> bool:
         """双档节奏的统一判定：hop 生效期或全屏结算画面开着 = 狂欢档。"""
@@ -857,8 +861,12 @@ class PetWindow(QWidget):
         self.idle_timer.start(random.randint(45_000, 105_000))
 
     def _maybe_idle_chat(self):
+        # 表演中/气泡开着：本轮闲聊整段跳过（哭戏上盖闲聊气泡也算打扰）
+        if self.action is not None or not self.bubble.isHidden():
+            self._schedule_idle_chat()
+            return
         quiet_for = time.monotonic() - self.last_activity
-        if quiet_for >= 100 and self.bubble.isHidden():
+        if quiet_for >= 100:
             self.dispatch({"type": "idle", "seconds": int(quiet_for)})
         self._schedule_idle_chat()
 
