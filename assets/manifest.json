@@ -445,11 +445,9 @@
         "states/snotty_D06.png",
         "states/snotty_D07.png",
         "states/snotty_D08.png",
-        "states/snotty_D09.png",
-        "states/snotty_D10.png",
-        "states/snotty_D11.png"
+        "states/snotty_D09.png"
       ],
-      "frame_ms": 60,
+      "frame_ms": 80,
       "bob_amp": 2,
       "period_ms": 900,
       "tilt_deg": 0,
