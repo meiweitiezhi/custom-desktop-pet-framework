@@ -513,9 +513,9 @@
       "tilt_deg": 0,
       "play": "once",
       "return_to": "idle",
-      "perform_seconds": 6.0,
+      "perform_seconds": 20.0,
       "hold_seconds": 0.3,
-      "max_seconds": 7.3
+      "max_seconds": 21.3
     }
   },
   "_disabled_states": {

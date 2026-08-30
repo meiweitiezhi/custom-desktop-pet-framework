@@ -701,6 +701,27 @@ class PetWindow(QWidget):
             self.music.play(bgm, self._music_volume)
         return True
 
+    def _on_menu_action(self, state: str):
+        """菜单点播统一入口：vroom 长途骑行带配乐，其余直接点播。"""
+        if state == "vroom":
+            self._play_vroom_bgm()
+        self.play_action(state)
+
+    def _play_vroom_bgm(self):
+        """骑摩托长途配乐：assets/local/vroom.wav（bgm 30s 起的 20 秒段）。
+
+        缺文件/后端坏静默骑行不拦车；与点歌互斥（顶掉在播曲目）。
+        """
+        try:
+            for base in (paths.APP_DIR, paths.BUNDLE_DIR):
+                cand = pathlib.Path(base) / "assets" / "local" / "vroom.wav"
+                if cand.is_file():
+                    self.music.stop()
+                    self.music.play(cand, self._music_volume)
+                    return
+        except Exception:
+            pass
+
     def _play_click_sfx(self):
         """播 [sound] click_sfx 指向的本地 wav（独立 QSoundEffect 实例）。
 
@@ -880,7 +901,8 @@ class PetWindow(QWidget):
         _header("情绪")
         for st in MENU_EMOTION:
             if st in window.states:
-                menu.addAction(_label(st), lambda s=st: window.play_action(s))
+                menu.addAction(_label(st),
+                            lambda s=st: window._on_menu_action(s))
         # —— 六拍舞：程序剪纸常驻循环舞，词条固定在情绪组末尾 ——
         if SIX_BEAT_STATE in window.states:
             menu.addAction(SIX_BEAT_ZH, window.play_six_beat)
@@ -889,7 +911,8 @@ class PetWindow(QWidget):
         _header("整活")
         for st in MENU_FUN:
             if st in window.states:
-                menu.addAction(_label(st), lambda s=st: window.play_action(s))
+                menu.addAction(_label(st),
+                            lambda s=st: window._on_menu_action(s))
         menu.addSeparator()
         # —— 系统组：复用宿主既有槽方法，绝不复制逻辑 ——
         _header("系统")

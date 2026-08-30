@@ -35,6 +35,7 @@ class _FakeWindow:
         self.states = {n: {} for n in loaded}
         self.reminder_timer = _FakeTimer()
         self.played = []
+        self.menu_entries = []
         self.dispatched = []
         self.hooks = []
         self.scanned = 0
@@ -57,6 +58,12 @@ class _FakeWindow:
     def _on_hook(self, ev):
         self.hooks.append(ev)
 
+    def _on_menu_action(self, state):
+        # 菜单统一入口镜像：vroom 只记录（不真放配乐），其余进 played
+        self.menu_entries.append(state)
+        if state != "vroom":
+            self.played.append(state)
+
     def _toggle_reminders(self, on):
         self.toggled.append(on)
 
@@ -66,7 +73,8 @@ class _FakeWindow:
 
 # 五态精简后的真实仓库现状：活动区=五件套+cheer（打气）+dance6（六拍舞）；
 # laugh/eat/hide/love/alien/blushmax/alien_suck 已入 manifest._disabled_states
-LOADED = ["idle", "cheer", "sleep", "shock", "dance", "cry", "dance6"]
+LOADED = ["idle", "cheer", "sleep", "shock", "dance", "cry", "dance6",
+          "vroom"]
 
 
 def _texts(menu: QMenu) -> list:
