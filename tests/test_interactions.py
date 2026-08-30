@@ -151,7 +151,7 @@ class TestRuleFlourish(unittest.TestCase):
         for _ in range(20):
             cmds = d.react({"type": "hook", "event": "error",
                             "flourish": "doom", "streak": 3})
-            self.assertEqual(_states(cmds), ["cry"],
+            self.assertEqual(_states(cmds), ["sleep"],
                              "doom 兜底不得再演 hide")
             for t in _says(cmds):
                 self.assertIn(t, rule_mod.HOOK_LINES["error"][1])

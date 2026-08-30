@@ -30,7 +30,7 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 MANIFEST = ROOT / "assets" / "manifest.json"
 STATES_DIR = ROOT / "assets" / "states"
 
-ONCE_STATES = ("shock", "cry", "dance")
+ONCE_STATES = ("shock", "dance")
 
 
 def _v4_spec(n=3, frame_ms=100, hold=1.2, trans=2, play="once"):
@@ -218,7 +218,6 @@ class TestManifestV4(unittest.TestCase):
             self.assertGreater(float(spec["max_seconds"]), 0.0)
         # 主人拍板的定格现值：shock/cry 定格 1.2 秒，dance 压扁谢幕前 0.3 秒
         self.assertEqual(self.states["shock"]["hold_seconds"], 1.2)
-        self.assertEqual(self.states["cry"]["hold_seconds"], 1.2)
         self.assertEqual(self.states["dance"]["hold_seconds"], 0.3)
 
     def test_frames_stripped_of_transition_and_legacy_refs(self):

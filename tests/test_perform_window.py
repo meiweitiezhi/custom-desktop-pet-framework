@@ -247,26 +247,14 @@ class TestManifestPerformWindow(unittest.TestCase):
         self.assertEqual(p.segment, "perform")
         self.assertIsNone(p.tick(0.05), "5.0 秒整当场谢幕（无下段）")
 
-    def test_cry_five_second_window_then_hold_transition(self):
-        spec = self.states["cry"]
-        self.assertEqual(spec.get("perform_seconds"), 5.0,
-                         "cry 表演段必须持续 5 秒")
-        p = self._player("cry")
-        durs = {name: dur for name, dur in p.segments}
-        self.assertAlmostEqual(durs["perform"], 5.0, places=9)
-        self.assertAlmostEqual(durs["hold"], 1.2, places=9)
-        self.assertAlmostEqual(durs["transition"], 30 * 0.033, places=9)
-        # 保险丝精算：5.0 + 1.2 + 0.99 + 1.0 宽限 = 8.19，显式锁值
-        self.assertAlmostEqual(float(spec["max_seconds"]), 8.19, places=9)
-        self.assertAlmostEqual(p.total_s + 1.0,
-                               float(spec["max_seconds"]), places=9,
-                               msg="max_seconds 必须 = 三段和 + 1 秒宽限")
-        for _ in range(10):                 # 10 拍 × 0.5s = 5.0s 整
-            p.tick(0.5)
-        self.assertEqual(p.segment, "hold", "cry 必须 5.0 秒整切进定格")
-        self.assertEqual(p.tick(0.0), 27, "定格恒亮末帧（28 帧的下标 27）")
-        p.tick(1.2)
-        self.assertEqual(p.segment, "transition", "定格完必须进转场")
+    def test_cry_now_in_disabled_zone_not_perform_window(self):
+        """cry 已入禁用区（主人拍板删除）：条目整体不在 states，帧数据封存。"""
+        self.assertNotIn("cry", self.states,
+                         "cry 必须已从活动区移除")
+        zone = json.loads(MANIFEST.read_text(encoding="utf-8")).get("_disabled_states", {})
+        self.assertIn("cry", zone, "cry 条目应在禁用区完整封存")
+        self.assertEqual(zone["cry"].get("perform_seconds"), 5.0,
+                         "封存时窗口字段原样保留，恢复即用")
 
     def test_dance_gif_five_second_window_then_hold_transition(self):
         # dance GIF 扭舞档（8 帧 @40ms）：点播表演窗口 5 秒取模循环约 15.6 圈

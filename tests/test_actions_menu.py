@@ -91,11 +91,11 @@ class TestActionsMenu(unittest.TestCase):
         texts = _texts(self.menu)
         # 五态精简：情绪组=发呆/打气/睡觉/惊讶/扭舞 + 常驻词条六拍舞，
         # 整活组只剩哭唧唧
-        for zh in ("发呆", "打气", "睡觉", "惊讶", "扭舞", "六拍舞", "哭唧唧"):
+        for zh in ("发呆", "打气", "睡觉", "惊讶", "扭舞", "六拍舞"):
             self.assertIn(zh, texts)
         # 禁用七态 + UFO 吸入必须整词缺席（数据在 _disabled_states 里）
         for zh in ("干饭", "笑哭", "生气", "缩帽躲", "比小心心", "外星吸人",
-                   "羞耻爆炸", "UFO 吸入"):
+                   "羞耻爆炸", "UFO 吸入", "哭唧唧"):
             self.assertNotIn(zh, texts, f"禁用态「{zh}」不得出现在菜单")
         # 三段分组之间要有分隔线，且构建菜单本身不许顺带触发任何动作
         seps = [a for a in self.menu.actions() if a.isSeparator()]
@@ -149,7 +149,7 @@ class TestManifestV3Fields(unittest.TestCase):
         multi = {k: v for k, v in self._states().items() if v.get("frames")}
         # 活动区带帧序列的恰为这六项（含 shock/cry 的 _Q、dance 的 _T
         # 压扁转场帧、45 帧常驻循环档的 cheer、六拍舞循环档 dance6）
-        self.assertEqual(set(multi), {"sleep", "shock", "dance", "cry", "vroom",
+        self.assertEqual(set(multi), {"sleep", "shock", "dance", "vroom",
                                       "cheer", "dance6"})
         for name, spec in multi.items():
             if name in ("cheer", "dance6"):

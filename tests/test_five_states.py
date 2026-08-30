@@ -21,8 +21,8 @@ MANIFEST = ROOT / "assets" / "manifest.json"
 
 # 主人拍板的五件套；cheer（打气）不在禁用名单里，照常留在活动区。
 # 禁用七件套（含本就缺图的 angry）+ alien_suck 吸入演出 = 禁用区八条。
-KEEP_FIVE = ("idle", "sleep", "dance", "shock", "cry")
-DISABLED_EIGHT = ("laugh", "eat", "love", "hide", "alien", "blushmax",
+KEEP_FOUR = ("idle", "sleep", "dance", "shock")
+DISABLED_NINE = ("laugh", "eat", "love", "hide", "alien", "blushmax", "cry",
                   "angry", "alien_suck")
 
 
@@ -37,7 +37,7 @@ class TestDisabledZoneManifest(unittest.TestCase):
         m = _manifest()
         zone = m.get("_disabled_states")
         self.assertIsInstance(zone, dict, "manifest 顶层缺 _disabled_states")
-        self.assertEqual(set(zone), set(DISABLED_EIGHT))
+        self.assertEqual(set(zone), set(DISABLED_NINE))
         # 禁用区条目数据完整：file/frames 都还在，随时可搬回 states 恢复
         for name, spec in zone.items():
             self.assertTrue(spec.get("file"), f"{name} 入区时丢了 file")
@@ -46,10 +46,10 @@ class TestDisabledZoneManifest(unittest.TestCase):
         states = _manifest()["states"]
         self.assertEqual(
             set(states),
-            set(KEEP_FIVE) | {"cheer", "dance6", "vroom"},
+            set(KEEP_FOUR) | {"cheer", "dance6", "vroom"},
             "活动区 = 五件套 + cheer（打气）+ dance6（六拍舞）"
             " + vroom（骑摩托）")
-        for name in DISABLED_EIGHT:
+        for name in DISABLED_NINE:
             self.assertNotIn(name, states, f"{name} 必须只存在于禁用区")
 
     def test_loader_explicitly_ignores_underscore_keys(self):

@@ -73,7 +73,7 @@ STATE_ZH = {
 MENU_EMOTION = ("idle", "cheer", "sleep", "shock", "dance")
 # MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
 #                 "laugh", "shock", "angry", "dance")
-MENU_FUN = ("cry", "vroom")
+MENU_FUN = ("vroom",)
 # MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
 
 # 专属演出动作：只在 manifest 登记与动作菜单出现，不进 bus.STATES 词表

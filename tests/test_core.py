@@ -350,9 +350,9 @@ class TestNewEvents(unittest.TestCase):
 
 NEW_FIVE = ("cry", "hide", "love", "alien", "blushmax")
 
-HOOK_ERROR_POOL = ["呜哇——又挂了…",
-                   "别骂了别骂了，我自己知道错了",
-                   "哇的一声哭出来"]
+HOOK_ERROR_POOL = ["呜…先躺一会儿，别骂我",
+                   "出错了嘛…我也很难过",
+                   "呜呜…让我缓缓"]
 # 【禁用区】doom 台词池随 hide 态退役：仅存档备查，不再是活代码
 FLOURISH_DOOM_POOL = ["让我在这顶帽子里反省一下人生",
                       "世界暂时与我无关，勿cue"]
@@ -386,25 +386,25 @@ class TestRuleTriggerMatrix(unittest.TestCase):
     def _says(self, cmds):
         return [c.text for c in cmds if isinstance(c, bus.Say)]
 
-    def test_hook_error_switches_to_cry_with_new_pool(self):
+    def test_hook_error_switches_to_sleep_after_cry_retired(self):
         d = RuleDriver()
         seen_states, seen_texts = set(), []
         for _ in range(30):
             cmds = d.react({"type": "hook", "event": "error"})
             seen_states.update(self._states(cmds))
             seen_texts += self._says(cmds)
-        self.assertEqual(seen_states, {"cry"})
+        self.assertEqual(seen_states, {"sleep"})
         self.assertTrue(seen_texts)  # 确实说了话
         for t in seen_texts:
             self.assertIn(t, set(HOOK_ERROR_POOL))
 
-    def test_flourish_doom_retired_falls_back_to_cry(self):
+    def test_flourish_doom_retired_falls_back_to_error_path(self):
         # doom→hide 已随 hide 入禁用区整段注释：归宿待主人拍板（候选
         # cry/shock/恢复hide），当前落回 error→cry 兜底，禁用台词池不复活
         from petfw.drivers import rule as rule_mod
         cmds = RuleDriver().react({"type": "hook", "event": "error",
                                    "flourish": "doom", "streak": 3})
-        self.assertEqual(self._states(cmds), ["cry"])
+        self.assertEqual(self._states(cmds), ["sleep"])
         for t in self._says(cmds):
             self.assertIn(t, set(HOOK_ERROR_POOL))
         self.assertFalse(hasattr(rule_mod, "FLOURISH_DOOM"),
