@@ -35,6 +35,7 @@ from .extensions.growth import GrowthTracker, level_for
 from .music_player import MusicPlayer, resolve_music
 from .song_flow import dance_loop_spec, resolve_dance6_bgm, should_ignore_click
 from .streaks import BuildStreak
+from .transition_swap import runtime_pose, swap_index
 
 ASSETS = paths.ASSETS            # 只读素材（frozen 时在解包目录）
 RUNTIME_PATH = paths.RUNTIME_PATH  # 可写位置（frozen 时在 exe 旁边）
@@ -70,9 +71,12 @@ STATE_ZH = {
 # 只渲染 self.states 里已加载出图的状态，缺图自动缺席隐藏。
 # 五态精简（主人拍板 2026-08）：laugh/eat/angry、hide/love/alien/blushmax
 # 已随 manifest["_disabled_states"] 入禁用区，词条注释保留、随时可恢复。
-MENU_EMOTION = ("idle", "cheer", "sleep", "shock", "dance")
+MENU_EMOTION = ("idle", "cheer", "shock", "dance")
 # MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
 #                 "laugh", "shock", "angry", "dance")
+# 【下线】睡觉入口按主人拍板隐藏（2026-09，常驻睡觉用不上手动切）：
+# 只藏菜单词条，sleep 状态本体/自动入睡/SetState 通路一切照旧，
+# 想恢复把 "sleep" 加回 MENU_EMOTION 即可。
 MENU_FUN = ("vroom",)
 # MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
 # 【下线】snotty（甩鼻涕）按主人拍板整态删除（2026-09）：词表/菜单/manifest
@@ -121,6 +125,23 @@ def action_overtime(elapsed, max_seconds) -> bool:
     except (TypeError, ValueError):
         return False
     return limit > 0 and float(elapsed) > limit
+
+
+def _alpha_headroom(pm) -> float:
+    """立绘图顶部的透明余量占比（0~1）：竖向过冲回弹的封顶依据。
+
+    与烘焙侧同口径：首个含非透明像素的行号 / 画布高。量不出来
+    （空图/后端异常）按 0 处理——竖向不过冲，宁可弹得保守绝不裁头。
+    """
+    try:
+        img = pm.toImage()
+        for y in range(img.height()):
+            for x in range(img.width()):
+                if img.pixelColor(x, y).alpha() > 0:
+                    return y / max(1, img.height())
+    except Exception:
+        pass
+    return 0.0
 
 
 # ---------------------------------------------------------------- 素材加载
@@ -227,7 +248,8 @@ def load_states(display_size: int) -> dict:
                 entry["pingpong"] = True
             # v4/v5 动作字段透传：play_action / ActionPlayer / 保险丝都吃这份拷贝
             for key in ("play", "return_to", "hold_seconds", "max_seconds",
-                        "transition_frames", "rounds", "perform_seconds"):
+                        "transition", "transition_frames", "rounds",
+                        "perform_seconds"):
                 if key in spec:
                     entry[key] = spec[key]
             # 转场段帧图独立加载成自己的列表（不与表演帧混槽）；
@@ -318,6 +340,7 @@ class PetWindow(QWidget):
         self._action_prev = None      # 表演开始前的心情（谢幕回归目标）
         self._action_started = 0.0    # 保险丝秒表：动作上场时刻（monotonic）
         self._action_max = 0.0        # 保险丝上限（秒）；0 = 不设防
+        self._swap_tail_pics = None   # 运行期换装尾段（谢幕目标非发呆时启用）
         self.pending_state = None     # 表演期间收到的最后一条 SetState 请求
         self._prev_state = None       # 结算画面打开前的心情，关窗时恢复
         self.settlement_open = False  # 全屏结算画面是否正在放
@@ -481,6 +504,9 @@ class PetWindow(QWidget):
         mode = (play or str(entry.get("play") or "loop")).lower()
         wants = [base, str(entry.get("return_to") or "idle"), "idle"]
         finish_target = next((s for s in wants if s in self.states), "idle")
+        # 运行期换装：谢幕目标非发呆时，转场尾段实时缩放目标立绘
+        # （先清旧再按需重建——任何新动作上场都不携带上一段的尾段）
+        self._swap_tail_pics = self._build_swap_tail(entry, finish_target)
         self.set_state(name)           # 先渲染首帧，呼吸相位同步归零
         player = ActionPlayer()
         player.start(dict(entry, play=mode), on_finish_state=finish_target,
@@ -495,6 +521,35 @@ class PetWindow(QWidget):
         self._action_max = max_s if mode == "once" else 0.0
         return True
 
+    def _build_swap_tail(self, entry, target):
+        """运行期换装尾段：谢幕目标非发呆时替换转场段的换装点之后。
+
+        烘焙侧把压扁回弹终点烘死成 idle——常驻睡觉的宠物点一下惊讶会
+        先「弹回发呆」再硬跳回睡觉，途中多一次发呆绕路（主人拍板
+        2026-09 修掉）。这里按 transition_swap 的同源包络把目标立绘
+        实时缩放出尾段：头段（蓄力压扁，与目标无关）原样用烘焙帧，
+        时间线帧数与保险丝口径都不动。目标是发呆 / 条目没有压扁回弹
+        转场 / 目标立绘缺失时返回 None，一切照旧。
+        """
+        pics = (entry or {}).get("transition_pics") or []
+        if target == "idle" or len(pics) < 2 \
+                or (entry or {}).get("transition") != "squash_return":
+            return None
+        state = self.states.get(target) or {}
+        base_pm = state.get("pixmap")
+        if base_pm is None or base_pm.isNull():
+            return None
+        swap = swap_index(len(pics))
+        headroom = _alpha_headroom(base_pm)
+        out = list(pics[:swap])
+        for k in range(swap, len(pics)):
+            pose = runtime_pose(k, len(pics), headroom)
+            if pose is None:
+                return None     # 包络异常（下标越界类）：整段弃用走烘焙帧
+            out.append(base_pm.transformed(
+                QTransform().scale(*pose), Qt.SmoothTransformation))
+        return out
+
     def _finish_action(self):
         """谢幕：回 来路 -> 表演者声明 -> idle 里第一个有图的；再结算排队请求。
 
@@ -505,6 +560,7 @@ class PetWindow(QWidget):
         self._action_prev = None
         self._action_started = 0.0     # 谢幕即撤防：保险丝秒表一并清零
         self._action_max = 0.0
+        self._swap_tail_pics = None    # 换装尾段随演出一起收摊
         fallbacks = [base, getattr(player, "on_finish_state", "idle"), "idle"]
         target = next((s for s in fallbacks if s in self.states), "idle")
         self.set_state(target)
@@ -518,11 +574,11 @@ class PetWindow(QWidget):
         return now < self.hop_until or self.settlement_open
 
     def _render(self, spec: dict, frame_idx=None, celebrating: bool = False,
-                use_transition: bool = False):
+                use_transition: bool = False, transition_pics=None):
         """把一个状态画上屏幕：呼吸/摆动 + 可选的指定帧。
 
-        use_transition=True 时亮转场段帧列表（transition_pics），下标是
-        ActionPlayer 转场段给出的 transition_frames 下标。
+        use_transition=True 时亮转场段帧列表；transition_pics 传了
+        （运行期换装尾段）则优先于条目自带的烘焙转场帧。
         """
         period, amp = spec["period"], spec["amp"]
         if celebrating:
@@ -535,8 +591,8 @@ class PetWindow(QWidget):
 
         if frame_idx is not None and spec.get("frames"):
             pics = spec["frames"]
-            if use_transition and spec.get("transition_pics"):
-                pics = spec["transition_pics"]   # 转场段亮转场帧列表
+            if use_transition:
+                pics = transition_pics or spec.get("transition_pics") or pics
             pm = pics[min(frame_idx, len(pics) - 1)]
         else:
             # 安静待机：多帧状态静立首帧，不再 ambient 轮播（治"定格闪跳"）
@@ -566,7 +622,8 @@ class PetWindow(QWidget):
                 self._finish_action()
                 return          # 谢幕当拍先收摊，下一拍起恢复正常渲染
             self._render(self.states[self.current], frame_idx=idx,
-                         use_transition=self.action.segment == "transition")
+                         use_transition=self.action.segment == "transition",
+                         transition_pics=self._swap_tail_pics)
             return
         # 走到这里必然空闲（无 action 播放中）：闲置久了悄然入睡
         self._maybe_auto_sleep(now)
@@ -1052,6 +1109,7 @@ class PetWindow(QWidget):
             self._action_prev = None
             self._action_started = 0.0   # 保险丝一并撤防
             self._action_max = 0.0
+            self._swap_tail_pics = None  # 换装尾段随演出一并收摊
         prev, self._prev_state = self._prev_state, None
         if prev and prev in self.states:
             self.set_state(prev)

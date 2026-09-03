@@ -136,6 +136,15 @@ dance 扭舞一段）；结算画面打开期间点击一律忽略、不触发�
   `_T` 帧）保留供回滚。cheer 单图经 `bake_cheer_party()` 变 45 帧常驻搞笑
   循环（play=loop，挥旗+猛压+粗转+星星爆开连招）。一键重烤：`python prep_assets.py --rebuild`
   （压扁转场 + cheer 派对 + sleep 提速 90ms，确定性幂等）。
+- **运行期换装（主人拍板 2026-09，治「惊讶途中弹回发呆」）**：烘焙转场
+  终点写死 idle，谢幕目标非发呆时会绕道弹回发呆再硬跳目标。宿主
+  `play_action` 发现谢幕目标 ≠ idle 且条目 `transition=squash_return` 时，
+  `_build_swap_tail()` 按 `petfw/transition_swap.py` 的同源三幕包络把换装点
+  之后的尾段实时缩放成目标立绘（头段蓄力压扁照用烘焙帧；竖向过冲按目标
+  头顶透明余量封顶防裁头；末帧精确落定目标原尺寸后 set_state 无缝）。
+  常量与 prep_assets.SQUASH_* 有防漂移锁测试。菜单「睡觉」词条同期隐藏
+  （常驻睡觉用不上手动切，sleep 状态本体/自动入睡照旧，想恢复把
+  "sleep" 加回 `host.MENU_EMOTION`）。
 - **结算画面联动保留但走新引擎**：结算 opened 改调
   `play_action("dance", play="loop")` 循环扭舞到关窗，closed 直接叫停
   播放器并恢复打开前的表情。

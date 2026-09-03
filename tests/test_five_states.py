@@ -126,10 +126,13 @@ class TestNoLivePathToDisabledStates(unittest.TestCase):
 
     def test_menu_roster_covers_only_active_states(self):
         from petfw.host import MENU_EMOTION, MENU_FUN, SIX_BEAT_STATE
+        # 睡觉入口按主人拍板隐藏（2026-09）：菜单 = 活动状态 - 隐藏词条
+        hidden = {"sleep"}
         self.assertEqual(
             set(MENU_EMOTION) | set(MENU_FUN) | {SIX_BEAT_STATE},
-            self.active,
-            "菜单词条集合（含六拍舞专属词条）必须恰等于活动状态集合")
+            self.active - hidden,
+            "菜单词条集合（含六拍舞专属词条）必须恰等于"
+            "活动状态集合减去隐藏词条")
 
 
 if __name__ == "__main__":

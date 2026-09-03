@@ -89,10 +89,11 @@ class TestActionsMenu(unittest.TestCase):
 
     def test_emotion_and_fun_groups_list_only_loaded_states(self):
         texts = _texts(self.menu)
-        # 五态精简：情绪组=发呆/打气/睡觉/惊讶/扭舞 + 常驻词条六拍舞，
-        # 整活组只剩哭唧唧
-        for zh in ("发呆", "打气", "睡觉", "惊讶", "扭舞", "六拍舞"):
+        # 情绪组=发呆/打气/惊讶/扭舞 + 常驻词条六拍舞；睡觉入口按主人
+        # 拍板隐藏（2026-09，常驻睡觉用不上手动切，自动入睡照旧）
+        for zh in ("发呆", "打气", "惊讶", "扭舞", "六拍舞"):
             self.assertIn(zh, texts)
+        self.assertNotIn("睡觉", texts, "睡觉入口已隐藏（状态本体保留）")
         # 禁用七态 + UFO 吸入必须整词缺席（数据在 _disabled_states 里）
         for zh in ("干饭", "笑哭", "生气", "缩帽躲", "比小心心", "外星吸人",
                    "羞耻爆炸", "UFO 吸入", "哭唧唧"):
