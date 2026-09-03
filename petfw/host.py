@@ -17,7 +17,7 @@ import pathlib
 from datetime import datetime
 
 from PySide6.QtCore import Qt, QPoint, QTimer, Signal
-from PySide6.QtGui import QGuiApplication, QIcon, QPixmap, QTransform
+from PySide6.QtGui import QGuiApplication, QIcon, QPainter, QPixmap, QTransform
 from PySide6.QtWidgets import (QApplication, QLabel, QMenu, QSystemTrayIcon,
                                QWidget)
 
@@ -316,7 +316,7 @@ class PetWindow(QWidget):
         global TICK_MS
         TICK_MS = resolve_tick_ms(cp)   # 渲染节拍可配置（30fps 载波，省电改 66）
         self.pet_name = cp.get("pet", "name", fallback="团子")
-        display = int(cp.get("pet", "display_size", fallback="128"))
+        display = int(cp.get("pet", "display_size", fallback="48"))
         self.states = load_states(display)
 
         pad = 26
@@ -528,8 +528,10 @@ class PetWindow(QWidget):
         先「弹回发呆」再硬跳回睡觉，途中多一次发呆绕路（主人拍板
         2026-09 修掉）。这里按 transition_swap 的同源包络把目标立绘
         实时缩放出尾段：头段（蓄力压扁，与目标无关）原样用烘焙帧，
-        时间线帧数与保险丝口径都不动。目标是发呆 / 条目没有压扁回弹
-        转场 / 目标立绘缺失时返回 None，一切照旧。
+        时间线帧数与保险丝口径都不动。每帧嵌回立绘原尺寸的固定画布
+        （鼓出在画布缘裁掉，与烘焙 _squash_pose 同语义）——转场绝不
+        撑大footprint。目标是发呆 / 条目没有压扁回弹转场 / 目标立绘
+        缺失时返回 None，一切照旧。
         """
         pics = (entry or {}).get("transition_pics") or []
         if target == "idle" or len(pics) < 2 \
@@ -546,8 +548,15 @@ class PetWindow(QWidget):
             pose = runtime_pose(k, len(pics), headroom)
             if pose is None:
                 return None     # 包络异常（下标越界类）：整段弃用走烘焙帧
-            out.append(base_pm.transformed(
-                QTransform().scale(*pose), Qt.SmoothTransformation))
+            fr = base_pm.transformed(
+                QTransform().scale(*pose), Qt.SmoothTransformation)
+            canvas = QPixmap(base_pm.size())
+            canvas.fill(Qt.transparent)
+            p = QPainter(canvas)
+            p.drawPixmap((canvas.width() - fr.width()) // 2,
+                         canvas.height() - fr.height(), fr)
+            p.end()
+            out.append(canvas)
         return out
 
     def _finish_action(self):

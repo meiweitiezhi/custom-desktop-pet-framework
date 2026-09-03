@@ -138,11 +138,13 @@ class TestBuildSwapTail(unittest.TestCase):
             self.assertIs(tail[i], baked[i], "头段必须原样引用烘焙帧")
         for i in range(swap, len(baked)):
             self.assertIsNot(tail[i], baked[i], "尾段必须是运行期换装帧")
-        # 末帧尺寸回归立绘原尺寸（落定为原图）
+        # 画布纪律（治「转场把桌宠撑大」）：尾段每帧画布恒等于立绘原尺寸，
+        # 鼓出在画布缘裁掉——与烘焙侧 _squash_pose 同语义，footprint 永不超标
         base = win.states["sleep"]["pixmap"]
-        last = tail[-1]
-        self.assertEqual((last.width(), last.height()),
-                         (base.width(), base.height()))
+        for i in range(swap, len(baked)):
+            self.assertEqual((tail[i].width(), tail[i].height()),
+                             (base.width(), base.height()),
+                             f"尾段第 {i} 帧画布必须钉死在立绘原尺寸")
 
 
 if __name__ == "__main__":

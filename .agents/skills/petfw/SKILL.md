@@ -141,7 +141,8 @@ dance 扭舞一段）；结算画面打开期间点击一律忽略、不触发�
   `play_action` 发现谢幕目标 ≠ idle 且条目 `transition=squash_return` 时，
   `_build_swap_tail()` 按 `petfw/transition_swap.py` 的同源三幕包络把换装点
   之后的尾段实时缩放成目标立绘（头段蓄力压扁照用烘焙帧；竖向过冲按目标
-  头顶透明余量封顶防裁头；末帧精确落定目标原尺寸后 set_state 无缝）。
+  头顶透明余量封顶防裁头；每帧嵌回立绘原尺寸固定画布，鼓出在画布缘裁掉
+  与烘焙同纪律，转场绝不撑大footprint；末帧精确落定后 set_state 无缝）。
   常量与 prep_assets.SQUASH_* 有防漂移锁测试。菜单「睡觉」词条同期隐藏
   （常驻睡觉用不上手动切，sleep 状态本体/自动入睡照旧，想恢复把
   "sleep" 加回 `host.MENU_EMOTION`）。
