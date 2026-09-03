@@ -152,11 +152,6 @@ dance 扭舞一段）；结算画面打开期间点击一律忽略、不触发�
 - **母带重烧**（本地工具不入库）：mp4 母带放 `assets/local/gen_videos/`
   跑 `python tools/local/rebuild_frames_from_videos.py` 全帧切片并自动合并
   manifest（frame_ms=int(1000/fps_est) 上限 60、play=once）。
-- **抠图质量救援（tools/recut_vroom.py，入库）**：色距+连通性双保险切
-  背景（保 ≥最大块6% 的显著连通块，丢装饰碎片孤岛）+ alpha 蚀缩杀白边 +
-  高斯羽化 + 半透明边去污重上色 + 程序化粒子尾气。vroom 现行 4 帧即此
-  出品（2026-09 主人拍板治「粗糙抠图」）；`--preview` 出新旧对比条到
-  assets/raw/drafts 肉眼验收后再全量烘帧。
 
 ### 结算画面配方（全屏走马灯战报）
 
