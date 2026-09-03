@@ -316,7 +316,7 @@ class PetWindow(QWidget):
         global TICK_MS
         TICK_MS = resolve_tick_ms(cp)   # 渲染节拍可配置（30fps 载波，省电改 66）
         self.pet_name = cp.get("pet", "name", fallback="团子")
-        display = int(cp.get("pet", "display_size", fallback="64"))
+        display = int(cp.get("pet", "display_size", fallback="80"))
         self.states = load_states(display)
 
         pad = 26
