@@ -432,27 +432,6 @@
       "hold_seconds": 0.3,
       "max_seconds": 21.3,
       "_feather": 2
-    },
-    "snotty": {
-      "file": "states/snotty_D00.png",
-      "frames": [
-        "states/snotty_D00.png",
-        "states/snotty_D01.png",
-        "states/snotty_D02.png",
-        "states/snotty_D03.png",
-        "states/snotty_D04.png",
-        "states/snotty_D05.png",
-        "states/snotty_D06.png",
-        "states/snotty_D07.png",
-        "states/snotty_D08.png",
-        "states/snotty_D09.png"
-      ],
-      "frame_ms": 80,
-      "bob_amp": 2,
-      "period_ms": 900,
-      "tilt_deg": 0,
-      "play": "loop",
-      "return_to": "idle"
     }
   },
   "_disabled_states": {

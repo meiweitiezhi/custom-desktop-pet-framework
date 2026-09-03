@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 # 只要求核心态必须已登记、且登记的名字不超出本词表（tests 有防漂移检查）。
 STATES = ("idle", "cheer", "eat", "sleep",
           "laugh", "shock", "angry", "dance",
-          "cry", "hide", "love", "alien", "blushmax", "vroom", "snotty")
+          "cry", "hide", "love", "alien", "blushmax", "vroom")
 
 # 核心四态：表情包形象的最低配置，缺任何一张都无法呈现角色
 CORE_STATES = ("idle", "cheer", "eat", "sleep")

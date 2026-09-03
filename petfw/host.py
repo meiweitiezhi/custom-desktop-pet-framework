@@ -63,7 +63,7 @@ STATE_ZH = {
     "laugh": "笑哭", "shock": "惊讶", "angry": "生气", "dance": "扭舞",
     "cry": "哭唧唧", "hide": "缩帽躲", "love": "比小心心",
     "alien": "外星吸人", "blushmax": "羞耻爆炸",
-    "vroom": "骑摩托", "snotty": "甩鼻涕",
+    "vroom": "骑摩托",
 }
 
 # 右键动作菜单的两组状态词条；系统组条目在构建器里现场生成。
@@ -73,8 +73,10 @@ STATE_ZH = {
 MENU_EMOTION = ("idle", "cheer", "sleep", "shock", "dance")
 # MENU_EMOTION = ("idle", "cheer", "eat", "sleep",
 #                 "laugh", "shock", "angry", "dance")
-MENU_FUN = ("vroom", "snotty")
+MENU_FUN = ("vroom",)
 # MENU_FUN = ("cry", "hide", "love", "alien", "blushmax", "alien_suck")
+# 【下线】snotty（甩鼻涕）按主人拍板整态删除（2026-09）：词表/菜单/manifest
+# 全清，12 张 v8 成品帧留档 assets/raw/snotty_archive/（exe 不再打包）。
 
 # 专属演出动作：只在 manifest 登记与动作菜单出现，不进 bus.STATES 词表
 # （不是表情状态，SetState 不认；演出一律走 play_action 点播）。
@@ -87,8 +89,9 @@ ACTION_ZH = {"alien_suck": "UFO 吸入"}
 SIX_BEAT_STATE = "dance6"
 SIX_BEAT_ZH = "六拍舞"
 
-# 左键单击专属演出参数：固定句、shock 尾部定格时长（宿主接管，不走驱动）
-CLICK_TEASE = "不要戳我！！！！"
+# 左键单击专属演出参数：shock 尾部定格时长（宿主接管，不走驱动）
+# 【下线】弹字气泡 Say("不要戳我！！！！") 按主人拍板移除（2026-09），
+# 音效与 shock 演出保持不变；想恢复在回落路径补回 bus.Say 即可。
 SHOCK_HOLD_TAIL_MS = 1200   # 与 manifest v4 shock.hold_seconds=1.2 同源同值；
                             # 显式传参只是沿用旧接口，正主是 manifest 字段
 # 【禁用区】旧单击 hide 定格参数随 hide 态下线，注释保留：
@@ -644,8 +647,8 @@ class PetWindow(QWidget):
         三条出路：
         - 歌播着 -> 忽略（不重播、不重置、不抢戏）；
         - 曲目在且开播成功 -> 循环伴舞，登记歌完回调收舞；
-        - mp3 缺失 / 多媒体后端坏 -> 回落现状：固定句气泡 + click.wav +
-          shock 演出尾部定格 1.2 秒（转场帧融回 idle）。
+        - mp3 缺失 / 多媒体后端坏 -> 回落现状：click.wav +
+          shock 演出尾部定格 1.2 秒（转场帧融回 idle），不弹气泡。
         结算画面打开期间照旧一律忽略。
         """
         if not should_perform(self.settlement_open):
@@ -656,8 +659,7 @@ class PetWindow(QWidget):
                 and self.music.play(self._music_path, self._music_volume):
             self._start_song_dance()
             return
-        # —— 降级回落：现状的「戳我」定格演出 ——
-        self.apply([bus.Say(CLICK_TEASE)])
+        # —— 降级回落：现状的「戳我」定格演出（弹字气泡已按主人拍板下线） ——
         self._play_click_sfx()
         self.play_action("shock", hold_tail_ms=SHOCK_HOLD_TAIL_MS)
         # 【禁用区】旧单击 hide 定格演出（1500ms），主人拍板暂时下线，可随时恢复：

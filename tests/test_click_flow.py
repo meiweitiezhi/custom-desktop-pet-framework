@@ -203,15 +203,12 @@ class TestHostClickShows(unittest.TestCase):
         win.states = rec.states
         return win, rec
 
-    def test_single_click_without_music_keeps_tease_and_shock(self):
-        """降级路径：mp3 缺失（music_path=None）回落现状的戳我定格演出。"""
-        from petfw import bus
+    def test_single_click_without_music_keeps_shock_no_bubble(self):
+        """降级路径：mp3 缺失（music_path=None）回落 shock 定格演出。
+        弹字气泡按主人拍板下线（2026-09）：不再 Say，音效与演出照旧。"""
         win, rec = self._win()
         win._perform_single_click()
-        self.assertEqual(len(rec.applied), 1)
-        say = rec.applied[0]
-        self.assertIsInstance(say, bus.Say)
-        self.assertEqual(say.text, "不要戳我！！！！", "固定句一字不许改")
+        self.assertEqual(rec.applied, [], "回落单击不再弹「不要戳我」气泡")
         self.assertEqual(rec.played, [("shock", None, 1200, None)],
                          "回落单击必须演 shock，且带 1200ms 尾部定格")
         self.assertEqual(rec.click_sfx_plays, 1, "click.wav 播放保持不变")
@@ -237,15 +234,13 @@ class TestHostClickShows(unittest.TestCase):
         self.assertEqual(rec.click_sfx_plays, 0, "点歌路径不叠 click.wav")
 
     def test_single_click_falls_back_when_backend_dead(self):
-        """降级路径：后端不可用（play 返回 False）回落戳我定格演出。"""
-        from petfw import bus
+        """降级路径：后端不可用（play 返回 False）回落定格演出，无气泡。"""
         import tempfile
         song = pathlib.Path(tempfile.mkdtemp()) / "bgm.mp3"
         song.write_bytes(b"ID3")
         win, rec = self._win(music_path=song, music_ok=False)
         win._perform_single_click()
-        say = rec.applied[0]
-        self.assertIsInstance(say, bus.Say)
+        self.assertEqual(rec.applied, [], "弹字气泡已下线，回落不 Say")
         self.assertEqual(rec.played, [("shock", None, 1200, None)])
         self.assertEqual(rec.click_sfx_plays, 1)
         self.assertEqual(len(rec.music.finish_cbs), 0, "没开播就不登记回调")
